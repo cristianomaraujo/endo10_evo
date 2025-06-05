@@ -1,9 +1,19 @@
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-
+import openai
 
 app = FastAPI()
+
+# Adiciona Middleware CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite acesso de qualquer origem — pode restringir depois se quiser
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Carrega sua planilha Excel
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
@@ -107,21 +117,13 @@ def buscar_diagnostico(respostas):
         return {"erro": "Diagnóstico não encontrado."}
 
 @app.post("/perguntar/")
-async def perguntar(indice: int = Form(...)):
-    if indice < len(perguntas):
-        return perguntas[indice]
-    else:
-        return {"mensagem": "Todas as perguntas foram feitas."}
+async def perguntar(indice: str = Form(...)):
+    return {"response": f"Você disse: {indice}"}
 
 @app.post("/responder/")
-async def responder(indice: int = Form(...), resposta_usuario: str = Form(...)):
-    pergunta_info = perguntas[indice]
-    interpretado = interpretar_resposta(
-        pergunta_info["pergunta"],
-        resposta_usuario,
-        pergunta_info["opcoes"]
-    )
-    return {"campo": pergunta_info["campo"], "resposta_interpretada": interpretado}
+async def responder(indice: str = Form(...), resposta_usuario: str = Form(...)):
+    # Aqui você poderia adaptar para fluxo de perguntas se quiser
+    return {"campo": "Campo exemplo", "resposta_interpretada": resposta_usuario}
 
 @app.post("/diagnostico/")
 async def diagnostico(respostas: dict):
