@@ -7,6 +7,10 @@ import os
 
 app = FastAPI()
 
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
