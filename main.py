@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
 import pandas as pd
+
 
 app = FastAPI()
 
