@@ -6,72 +6,19 @@ import openai
 
 app = FastAPI()
 
-# Adiciona Middleware CORS
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite acesso de qualquer origem — pode restringir depois se quiser
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Carrega sua planilha Excel
+# Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
-# Página inicial personalizada
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    return """
-    <!DOCTYPE html>
-    <html lang="pt-BR">
-    <head>
-        <meta charset="UTF-8">
-        <title>Endo10 EVO - Diagnóstico Endodôntico</title>
-        <style>
-            body {
-                background-color: #0b0b0b;
-                color: #f0f0f0;
-                font-family: 'Arial', sans-serif;
-                text-align: center;
-                padding: 40px;
-            }
-            img {
-                width: 250px;
-                margin-bottom: 20px;
-            }
-            h1 {
-                font-size: 2.8em;
-                margin-bottom: 20px;
-                color: #f5a623;
-            }
-            p {
-                font-size: 1.3em;
-                margin-bottom: 40px;
-                color: #ccc;
-            }
-            a {
-                text-decoration: none;
-                font-size: 1.2em;
-                background-color: #f5a623;
-                color: white;
-                padding: 15px 30px;
-                border-radius: 30px;
-                transition: background-color 0.3s;
-            }
-            a:hover {
-                background-color: #e09117;
-            }
-        </style>
-    </head>
-    <body>
-        <img src="https://www.narsm.com.br/wp-content/uploads/2024/06/Eng.jpg" alt="Logo Endo10 EVO">
-        <h1>Bem-vindo ao Endo10 EVO</h1>
-        <p>Seu assistente inteligente para triagem e diagnóstico endodôntico.</p>
-        <a href="/docs">Iniciar Diagnóstico</a>
-    </body>
-    </html>
-    """
-
+# Perguntas da triagem
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
     {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
@@ -81,12 +28,25 @@ perguntas = [
     {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
 ]
 
-def interpretar_resposta(pergunta, resposta_usuario, opcoes):
-    prompt = f"""
-Você é um assistente de diagnóstico endodôntico. Mapeie a resposta do usuário para uma das opções:
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return "<h1>API do Chatbot Endo10 EVO funcionando!</h1>"
 
-Pergunta: {pergunta}
-Opções: {', '.join(opcoes)}
+@app.post("/perguntar/")
+async def perguntar(indice: int = Form(...)):
+    if indice < len(perguntas):
+        return perguntas[indice]
+    else:
+        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
+
+@app.post("/responder/")
+async def responder(indice: int = Form(...), resposta_usuario: str = Form(...)):
+    pergunta_info = perguntas[indice]
+    prompt = f"""
+Você é um assistente de diagnóstico endodôntico. Mapeie a resposta do usuário para uma das opções disponíveis.
+
+Pergunta: {pergunta_info['pergunta']}
+Opções: {', '.join(pergunta_info['opcoes'])}
 Resposta do usuário: {resposta_usuario}
 
 Responda apenas com a melhor opção.
@@ -96,9 +56,14 @@ Responda apenas com a melhor opção.
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )
-    return response["choices"][0]["message"]["content"].strip()
+    resposta_interpretada = response["choices"][0]["message"]["content"].strip()
+    return {
+        "campo": pergunta_info["campo"],
+        "resposta_interpretada": resposta_interpretada
+    }
 
-def buscar_diagnostico(respostas):
+@app.post("/diagnostico/")
+async def diagnostico(respostas: dict):
     filtro = (
         (df["DOR"] == respostas["DOR"]) &
         (df["APARECIMENTO"] == respostas["APARECIMENTO"]) &
@@ -115,16 +80,3 @@ def buscar_diagnostico(respostas):
         }
     else:
         return {"erro": "Diagnóstico não encontrado."}
-
-@app.post("/perguntar/")
-async def perguntar(indice: str = Form(...)):
-    return {"response": f"Você disse: {indice}"}
-
-@app.post("/responder/")
-async def responder(indice: str = Form(...), resposta_usuario: str = Form(...)):
-    # Aqui você poderia adaptar para fluxo de perguntas se quiser
-    return {"campo": "Campo exemplo", "resposta_interpretada": resposta_usuario}
-
-@app.post("/diagnostico/")
-async def diagnostico(respostas: dict):
-    return buscar_diagnostico(respostas)
