@@ -2,7 +2,8 @@ from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-import openai
+from openai import OpenAI
+import os
 
 app = FastAPI()
 
@@ -14,6 +15,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Instancia o cliente OpenAI com a API KEY
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
@@ -53,7 +57,7 @@ Resposta do usuário: {resposta_usuario}
 
 Responda apenas com a opção mais adequada da lista.
 """
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "Você é um especialista em diagnóstico endodôntico."},
@@ -62,7 +66,7 @@ Responda apenas com a opção mais adequada da lista.
         temperature=0.0,
         max_tokens=50
     )
-    resposta_interpretada = response["choices"][0]["message"]["content"].strip()
+    resposta_interpretada = response.choices[0].message.content.strip()
     return {
         "campo": pergunta_info["campo"],
         "resposta_interpretada": resposta_interpretada
