@@ -43,18 +43,24 @@ async def perguntar(indice: int = Form(...)):
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...)):
     pergunta_info = perguntas[indice]
     prompt = f"""
-Você é um assistente de diagnóstico endodôntico. Mapeie a resposta do usuário para uma das opções disponíveis.
+Você é um assistente de endodontia.
+
+Sua tarefa é interpretar a resposta do usuário e mapear para uma das opções possíveis.
 
 Pergunta: {pergunta_info['pergunta']}
-Opções: {', '.join(pergunta_info['opcoes'])}
+Opções possíveis: {', '.join(pergunta_info['opcoes'])}
 Resposta do usuário: {resposta_usuario}
 
-Responda apenas com a melhor opção.
+Responda apenas com a opção mais adequada da lista.
 """
     response = openai.ChatCompletion.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0
+        messages=[
+            {"role": "system", "content": "Você é um especialista em diagnóstico endodôntico."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.0,
+        max_tokens=50
     )
     resposta_interpretada = response["choices"][0]["message"]["content"].strip()
     return {
