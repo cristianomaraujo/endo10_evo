@@ -1,15 +1,65 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 import pandas as pd
-import openai
-import os
 
 app = FastAPI()
 
-# Pega a chave da variável de ambiente
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Carrega o banco de dados
+# Carrega sua planilha Excel
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
+
+# Página inicial personalizada
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return """
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <title>Endo10 EVO - Diagnóstico Endodôntico</title>
+        <style>
+            body {
+                background-color: #0b0b0b;
+                color: #f0f0f0;
+                font-family: 'Arial', sans-serif;
+                text-align: center;
+                padding: 40px;
+            }
+            img {
+                width: 250px;
+                margin-bottom: 20px;
+            }
+            h1 {
+                font-size: 2.8em;
+                margin-bottom: 20px;
+                color: #f5a623;
+            }
+            p {
+                font-size: 1.3em;
+                margin-bottom: 40px;
+                color: #ccc;
+            }
+            a {
+                text-decoration: none;
+                font-size: 1.2em;
+                background-color: #f5a623;
+                color: white;
+                padding: 15px 30px;
+                border-radius: 30px;
+                transition: background-color 0.3s;
+            }
+            a:hover {
+                background-color: #e09117;
+            }
+        </style>
+    </head>
+    <body>
+        <img src="https://www.narsm.com.br/wp-content/uploads/2024/06/Eng.jpg" alt="Logo Endo10 EVO">
+        <h1>Bem-vindo ao Endo10 EVO</h1>
+        <p>Seu assistente inteligente para triagem e diagnóstico endodôntico.</p>
+        <a href="/docs">Iniciar Diagnóstico</a>
+    </body>
+    </html>
+    """
 
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
