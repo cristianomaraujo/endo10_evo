@@ -20,23 +20,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar a pasta static
+# Static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Instancia o cliente OpenAI com a API KEY
+# OpenAI Client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Carrega planilha
+# Load Excel sheet
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
-# Perguntas da triagem
+# Questions
 perguntas = [
-    {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
-    {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
-    {"campo": "VITALIDADE PULPAR", "pergunta": "Qual é a condição da vitalidade pulpar do dente?", "opcoes": ["Normal", "Alterado", "Negativo"]},
-    {"campo": "PERCUSSÃO", "pergunta": "O dente é sensível à percussão?", "opcoes": ["Não se aplica", "Sensível", "Normal"]},
-    {"campo": "PALPAÇÃO", "pergunta": "Durante a palpação, o que foi observado no dente?", "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
-    {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
+    {"campo": "DOR", "pergunta": "Does the patient have pain?", "opcoes": ["Ausente", "Presente"]},
+    {"campo": "APARECIMENTO", "pergunta": "How does the pain appear?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
+    {"campo": "VITALIDADE PULPAR", "pergunta": "What is the condition of the pulp vitality?", "opcoes": ["Normal", "Alterado", "Negativo"]},
+    {"campo": "PERCUSSÃO", "pergunta": "Is the tooth sensitive to percussion?", "opcoes": ["Não se aplica", "Sensível", "Normal"]},
+    {"campo": "PALPAÇÃO", "pergunta": "What was observed during palpation?", "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
+    {"campo": "RADIOGRAFIA", "pergunta": "What does the radiograph show?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
 ]
 
 sessions = {}
@@ -51,26 +51,26 @@ async def perguntar(indice: int = Form(...)):
     if indice < len(perguntas):
         return perguntas[indice]
     else:
-        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
+        return {"mensagem": "Triage finished. Let's calculate your diagnosis."}
 
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
     pergunta_info = perguntas[indice]
     prompt = f"""
-Você é um assistente de endodontia.
+You are an endodontic diagnosis assistant.
 
-Sua tarefa é interpretar a resposta do usuário e mapear para uma das opções possíveis.
+Your task is to interpret the user's response and map it to one of the possible options.
 
-Pergunta: {pergunta_info['pergunta']}
-Opções possíveis: {', '.join(pergunta_info['opcoes'])}
-Resposta do usuário: {resposta_usuario}
+Question: {pergunta_info['pergunta']}
+Possible options: {', '.join(pergunta_info['opcoes'])}
+User's response: {resposta_usuario}
 
-Responda apenas com a opção mais adequada da lista.
+Respond only with the most appropriate option from the list.
 """
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Você é um especialista em diagnóstico endodôntico."},
+            {"role": "system", "content": "You are a specialist in endodontic diagnosis. Always reply in the same language used by the user."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.0,
@@ -80,19 +80,12 @@ Responda apenas com a opção mais adequada da lista.
 
     if session_id not in sessions:
         sessions[session_id] = {}
+    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
 
     return {
         "campo": pergunta_info["campo"],
         "resposta_interpretada": resposta_interpretada
     }
-
-@app.post("/confirmar/")
-async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
-    pergunta_info = perguntas[indice]
-    if session_id not in sessions:
-        sessions[session_id] = {}
-    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
-    return {"mensagem": "Resposta confirmada."}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
@@ -107,33 +100,33 @@ async def diagnostico(session_id: str = Form(...)):
     )
     resultado = df[filtro]
     if not resultado.empty:
+        diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
+        diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+
+        explicacao_prompt = f"""
+Explain the following endodontic diagnosis clearly for a recent dental graduate:
+- Main Diagnosis: {diagnostico}
+- Complementary Diagnosis: {diagnostico_complementar}
+"""
+
+        explicacao_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a specialist in endodontic diagnosis. Always reply in the same language used by the user."},
+                {"role": "user", "content": explicacao_prompt}
+            ],
+            temperature=0.5,
+            max_tokens=500
+        )
+        explicacao = explicacao_response.choices[0].message.content.strip()
+
         return {
-            "diagnostico": resultado.iloc[0]["DIAGNÓSTICO"],
-            "diagnostico_complementar": resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+            "diagnostico": diagnostico,
+            "diagnostico_complementar": diagnostico_complementar,
+            "explicacao": explicacao
         }
     else:
-        return {"erro": "Diagnóstico não encontrado."}
-
-@app.post("/explicacao/")
-async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...)):
-    prompt = f"""
-Explique de forma clara e didática para um dentista recém-formado:
-
-Diagnóstico: {diagnostico}
-Diagnóstico Complementar: {diagnostico_complementar}
-
-A explicação deve ser breve, sem jargões excessivos, mas mantendo um nível técnico adequado.
-"""
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "Você é um professor de endodontia."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.5,
-        max_tokens=300
-    )
-    return {"explicacao": response.choices[0].message.content.strip()}
+        return {"erro": "Diagnosis not found."}
 
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
@@ -143,7 +136,7 @@ async def gerar_pdf(session_id: str):
     p.setFont("Helvetica", 12)
 
     y = 750
-    p.drawString(100, y, "Relatório da Triagem Endodôntica - Endo10 EVO")
+    p.drawString(100, y, "Endodontic Diagnosis Report - Endo10 EVO")
     y -= 40
 
     for campo, resposta in respostas.items():
@@ -153,4 +146,4 @@ async def gerar_pdf(session_id: str):
     p.save()
     buffer.seek(0)
 
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=relatorio_triagem_endo10evo.pdf"})
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=endo10evo_report.pdf"})
