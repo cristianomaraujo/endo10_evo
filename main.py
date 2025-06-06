@@ -1,9 +1,9 @@
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import pandas as pd
-import openai
+from openai import OpenAI
 import os
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
@@ -20,16 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static directory
+# Montar a pasta static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# OpenAI API Key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Instancia o cliente OpenAI com a API KEY
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Load Spreadsheet
+# Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
-# Questions
+# Perguntas da triagem
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
     {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
@@ -46,86 +46,56 @@ async def root():
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
-async def detectar_idioma(mensagem_usuario: str):
-    prompt = f"Detect the language of this message: {mensagem_usuario}. Reply with the language name (e.g., Portuguese, English, Spanish)."
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=10
-    )
-    idioma = response.choices[0].message.content.strip()
-    return idioma
-
-async def traduzir_texto(texto: str, destino: str):
-    prompt = f"Translate this to {destino}: {texto}"
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-        max_tokens=200
-    )
-    traducao = response.choices[0].message.content.strip()
-    return traducao
-
-@app.post("/iniciar/")
-async def iniciar(session_id: str = Form(...), saudacao_usuario: str = Form(...)):
-    idioma = await detectar_idioma(saudacao_usuario)
-    sessions[session_id] = {"idioma": idioma, "respostas": {}, "estado": "perguntando", "indice": 0}
-    pergunta_original = perguntas[0]["pergunta"]
-    pergunta_traduzida = await traduzir_texto(pergunta_original, idioma)
-    return {"pergunta": pergunta_traduzida}
+@app.post("/perguntar/")
+async def perguntar(indice: int = Form(...)):
+    if indice < len(perguntas):
+        return perguntas[indice]
+    else:
+        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
 
 @app.post("/responder/")
-async def responder(session_id: str = Form(...), resposta_usuario: str = Form(...)):
-    sessao = sessions.get(session_id)
-    idioma = sessao["idioma"]
-    indice = sessao["indice"]
+async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
     pergunta_info = perguntas[indice]
+    prompt = f"""
+Você é um assistente de endodontia.
 
-    prompt = f"Classify the user's response into one of these options: {', '.join(pergunta_info['opcoes'])}. User said: {resposta_usuario}. Answer with only one of the options."
-    response = openai.ChatCompletion.create(
+Sua tarefa é interpretar a resposta do usuário e mapear para uma das opções possíveis.
+
+Pergunta: {pergunta_info['pergunta']}
+Opções possíveis: {', '.join(pergunta_info['opcoes'])}
+Resposta do usuário: {resposta_usuario}
+
+Responda apenas com a opção mais adequada da lista.
+"""
+    response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "system", "content": "Você é um especialista em diagnóstico endodôntico."},
+            {"role": "user", "content": prompt}
+        ],
         temperature=0.0,
-        max_tokens=20
+        max_tokens=50
     )
     resposta_interpretada = response.choices[0].message.content.strip()
 
-    sessao["resposta_interpretada"] = resposta_interpretada
-
-    confirmacao = await traduzir_texto(f"Você quis dizer: {resposta_interpretada}? (sim/não)", idioma)
-
-    return {"confirmacao": confirmacao}
+    return {
+        "campo": pergunta_info["campo"],
+        "resposta_interpretada": resposta_interpretada
+    }
 
 @app.post("/confirmar/")
-async def confirmar(session_id: str = Form(...), confirmacao_usuario: str = Form(...)):
-    sessao = sessions.get(session_id)
-    idioma = sessao["idioma"]
+async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
+    pergunta_info = perguntas[indice]
 
-    if confirmacao_usuario.strip().lower() in ["sim", "yes"]:
-        indice = sessao["indice"]
-        campo = perguntas[indice]["campo"]
-        sessao["respostas"][campo] = sessao["resposta_interpretada"]
-        sessao["indice"] += 1
+    if session_id not in sessions:
+        sessions[session_id] = {}
 
-        if sessao["indice"] < len(perguntas):
-            nova_pergunta = perguntas[sessao["indice"]]["pergunta"]
-            pergunta_traduzida = await traduzir_texto(nova_pergunta, idioma)
-            return {"proxima_pergunta": pergunta_traduzida}
-        else:
-            return {"mensagem": await traduzir_texto("Triagem finalizada. Vamos calcular seu diagnóstico.", idioma)}
-    else:
-        pergunta = perguntas[sessao["indice"]]["pergunta"]
-        pergunta_traduzida = await traduzir_texto(pergunta, idioma)
-        return {"pergunta": pergunta_traduzida}
+    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
+    return {"mensagem": "Resposta confirmada."}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
-    sessao = sessions.get(session_id)
-    respostas = sessao["respostas"]
-    idioma = sessao["idioma"]
-
+    respostas = sessions.get(session_id, {})
     filtro = (
         (df["DOR"] == respostas.get("DOR")) &
         (df["APARECIMENTO"] == respostas.get("APARECIMENTO")) &
@@ -134,22 +104,39 @@ async def diagnostico(session_id: str = Form(...)):
         (df["PALPAÇÃO"] == respostas.get("PALPAÇÃO")) &
         (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
     )
-
     resultado = df[filtro]
     if not resultado.empty:
-        diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
-        diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
-        diag_traduzido = await traduzir_texto(diagnostico, idioma)
-        diag_comp_traduzido = await traduzir_texto(diagnostico_complementar, idioma)
-        return {"diagnostico": diag_traduzido, "diagnostico_complementar": diag_comp_traduzido}
+        return {
+            "diagnostico": resultado.iloc[0]["DIAGNÓSTICO"],
+            "diagnostico_complementar": resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+        }
     else:
-        return {"erro": await traduzir_texto("Diagnóstico não encontrado.", idioma)}
+        return {"erro": "Diagnóstico não encontrado."}
+
+@app.post("/explicacao/")
+async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...)):
+    prompt = f"""
+Explique de forma didática para um dentista recém-formado o seguinte diagnóstico:
+- Diagnóstico Principal: {diagnostico}
+- Diagnóstico Complementar: {diagnostico_complementar}
+
+A explicação deve ser clara, sem termos excessivamente técnicos, e apresentar o raciocínio clínico por trás do diagnóstico.
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Você é um professor de endodontia."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5,
+        max_tokens=300
+    )
+    explicacao = response.choices[0].message.content.strip()
+    return JSONResponse(content={"explicacao": explicacao})
 
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
-    sessao = sessions.get(session_id)
-    respostas = sessao["respostas"]
-
+    respostas = sessions.get(session_id, {})
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     p.setFont("Helvetica", 12)
