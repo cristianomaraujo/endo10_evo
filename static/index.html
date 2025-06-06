@@ -5,6 +5,7 @@
   <title>Endo10 EVO - Diagnóstico Endodôntico</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
+    /* Loader de "digitando..." */
     .typing {
       display: inline-block;
     }
@@ -24,8 +25,12 @@
       animation-delay: 0.4s;
     }
     @keyframes blink {
-      0%, 80%, 100% { opacity: 0; }
-      40% { opacity: 1; }
+      0%, 80%, 100% {
+        opacity: 0;
+      }
+      40% {
+        opacity: 1;
+      }
     }
   </style>
 </head>
@@ -47,7 +52,6 @@
 
     let pendingConfirmation = false;
     let lastInterpretedAnswer = '';
-    let firstUserMessageSent = false;
 
     function addMessage(message, sender) {
       const messagesDiv = document.getElementById("messages");
@@ -55,8 +59,13 @@
       messageDiv.classList.add("message", sender);
 
       const avatar = document.createElement("img");
-      avatar.src = sender === "bot" ? "/static/img/chatbot.png" : "/static/img/usuario.png";
-      avatar.alt = sender === "bot" ? "Bot" : "User";
+      if (sender === "bot") {
+        avatar.src = "/static/img/chatbot.png";
+        avatar.alt = "Bot";
+      } else {
+        avatar.src = "/static/img/usuario.png";
+        avatar.alt = "User";
+      }
       avatar.classList.add("avatar");
 
       const text = document.createElement("div");
@@ -97,6 +106,10 @@
       }
     }
 
+    async function iniciarChat() {
+      addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! I am Endo10 EVO, your assistant for endodontic diagnosis. Please start by greeting me in your preferred language, and we will continue our conversation in that language. ✅", "bot");
+    }
+
     async function fetchPergunta() {
       addTypingIndicator();
       const response = await fetch(API_BASE + "/perguntar/", {
@@ -109,42 +122,38 @@
 
       if (data.mensagem) {
         addMessage(data.mensagem, "bot");
-        await fetchDiagnostico();
+
+        // Buscar diagnóstico
+        addTypingIndicator();
+        const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `session_id=${sessionId}`
+        });
+        const diagnosticoData = await responseDiagnostico.json();
+        removeTypingIndicator();
+
+        if (diagnosticoData.diagnostico) {
+          addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
+          addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
+
+          // Buscar explicação
+          addTypingIndicator();
+          const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}`
+          });
+          const explicacaoData = await explicacaoResponse.json();
+          removeTypingIndicator();
+
+          addMessage(`📝 Explicação: ${explicacaoData.explicacao}`, "bot");
+        } else {
+          addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
+        }
       } else {
         addMessage(data.pergunta, "bot");
       }
-    }
-
-    async function fetchDiagnostico() {
-      addTypingIndicator();
-      const response = await fetch(API_BASE + "/diagnostico/", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `session_id=${sessionId}`
-      });
-      const diagnosticoData = await response.json();
-      removeTypingIndicator();
-
-      if (diagnosticoData.diagnostico) {
-        addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
-        addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
-        await fetchExplicacao(diagnosticoData.diagnostico, diagnosticoData.diagnostico_complementar);
-      } else {
-        addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
-      }
-    }
-
-    async function fetchExplicacao(diagnostico, diagnostico_complementar) {
-      addTypingIndicator();
-      const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `diagnostico=${encodeURIComponent(diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnostico_complementar)}`
-      });
-      const explicacaoData = await explicacaoResponse.json();
-      removeTypingIndicator();
-
-      addMessage(`📝 Explicação: ${explicacaoData.explicacao}`, "bot");
     }
 
     document.getElementById("chat-form").addEventListener("submit", async (e) => {
@@ -155,18 +164,7 @@
 
       addMessage(userMessage, "user");
 
-      if (!firstUserMessageSent) {
-        addTypingIndicator();
-        const response = await fetch(API_BASE + "/responder/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
-        });
-        await response.json();
-        removeTypingIndicator();
-        firstUserMessageSent = true;
-        await fetchPergunta();
-      } else if (!pendingConfirmation) {
+      if (!pendingConfirmation) {
         addTypingIndicator();
         const response = await fetch(API_BASE + "/responder/", {
           method: "POST",
@@ -179,9 +177,9 @@
         lastInterpretedAnswer = data.resposta_interpretada;
         pendingConfirmation = true;
 
-        addMessage(`Baseado na sua resposta, posso considerar **${lastInterpretedAnswer}**? (Digite: Sim ou Não)`, "bot");
+        addMessage(data.double_check, "bot");
       } else {
-        if (userMessage.toLowerCase() === "sim") {
+        if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes") {
           await fetch(API_BASE + "/confirmar/", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -205,7 +203,7 @@
       window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
     });
 
-    addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет!\n\nI am Endo10 EVO, your assistant for endodontic diagnosis. Please greet me in your preferred language. 🌍", "bot");
+    iniciarChat();
   </script>
 </body>
 </html>
