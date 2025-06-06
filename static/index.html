@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Endo10 EVO - Diagnóstico Endodôntico</title>
+  <title>Endo10 EVO - Endodontic Diagnosis Assistant</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    /* Loader de "digitando..." */
     .typing {
       display: inline-block;
     }
@@ -25,12 +24,8 @@
       animation-delay: 0.4s;
     }
     @keyframes blink {
-      0%, 80%, 100% {
-        opacity: 0;
-      }
-      40% {
-        opacity: 1;
-      }
+      0%, 80%, 100% { opacity: 0; }
+      40% { opacity: 1; }
     }
   </style>
 </head>
@@ -38,10 +33,10 @@
   <div id="chat-container">
     <div id="messages"></div>
     <form id="chat-form">
-      <input type="text" id="user-input" placeholder="Digite sua resposta..." autocomplete="off" />
-      <button type="submit">Enviar</button>
+      <input type="text" id="user-input" placeholder="Type your response..." autocomplete="off" />
+      <button type="submit">Send</button>
     </form>
-    <button id="download-btn">📄 Baixar PDF</button>
+    <button id="download-btn">📄 Download PDF</button>
   </div>
 
   <script>
@@ -59,13 +54,8 @@
       messageDiv.classList.add("message", sender);
 
       const avatar = document.createElement("img");
-      if (sender === "bot") {
-        avatar.src = "/static/img/chatbot.png";
-        avatar.alt = "Bot";
-      } else {
-        avatar.src = "/static/img/usuario.png";
-        avatar.alt = "User";
-      }
+      avatar.src = sender === "bot" ? "/static/img/chatbot.png" : "/static/img/usuario.png";
+      avatar.alt = sender === "bot" ? "Bot" : "User";
       avatar.classList.add("avatar");
 
       const text = document.createElement("div");
@@ -101,13 +91,11 @@
 
     function removeTypingIndicator() {
       const typingDiv = document.getElementById("typing");
-      if (typingDiv) {
-        typingDiv.remove();
-      }
+      if (typingDiv) typingDiv.remove();
     }
 
     async function iniciarChat() {
-      addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! I am Endo10 EVO, your assistant for endodontic diagnosis. Please start by greeting me in your preferred language, and we will continue our conversation in that language. ✅", "bot");
+      addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! \n\nI am Endo10 EVO, your assistant for endodontic diagnosis. Please greet me in your preferred language. 🌍", "bot");
     }
 
     async function fetchPergunta() {
@@ -123,7 +111,7 @@
       if (data.mensagem) {
         addMessage(data.mensagem, "bot");
 
-        // Buscar diagnóstico
+        // Chamar o diagnóstico
         addTypingIndicator();
         const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
           method: "POST",
@@ -134,22 +122,22 @@
         removeTypingIndicator();
 
         if (diagnosticoData.diagnostico) {
-          addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
-          addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
+          addMessage(`🦷 ${diagnosticoData.diagnostico}`, "bot");
+          addMessage(`📚 ${diagnosticoData.diagnostico_complementar}`, "bot");
 
-          // Buscar explicação
+          // Chamar a explicação
           addTypingIndicator();
           const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}`
+            body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}&session_id=${sessionId}`
           });
           const explicacaoData = await explicacaoResponse.json();
           removeTypingIndicator();
 
-          addMessage(`📝 Explicação: ${explicacaoData.explicacao}`, "bot");
-        } else {
-          addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
+          addMessage(`📝 ${explicacaoData.explicacao}`, "bot");
+        } else if (diagnosticoData.mensagem) {
+          addMessage(diagnosticoData.mensagem, "bot");
         }
       } else {
         addMessage(data.pergunta, "bot");
@@ -177,15 +165,23 @@
         lastInterpretedAnswer = data.resposta_interpretada;
         pendingConfirmation = true;
 
-        addMessage(data.double_check, "bot");
+        addTypingIndicator();
+        const responseConfirm = await fetch(API_BASE + "/confirmar/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
+        });
+        const confirmData = await responseConfirm.json();
+        removeTypingIndicator();
+
+        addMessage(confirmData.mensagem, "bot");
       } else {
-        if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes") {
+        if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes" || userMessage.toLowerCase() === "oui" || userMessage.toLowerCase() === "sí") {
           await fetch(API_BASE + "/confirmar/", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
           });
-
           indice += 1;
           pendingConfirmation = false;
           await fetchPergunta();
@@ -199,7 +195,6 @@
     });
 
     document.getElementById("download-btn").addEventListener("click", () => {
-      const sessionId = sessionStorage.getItem("session_id");
       window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
     });
 
