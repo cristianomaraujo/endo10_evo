@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import pandas as pd
-from openai import OpenAI
+import openai
 import os
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
@@ -23,8 +23,8 @@ app.add_middleware(
 # Montar a pasta static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Instancia o cliente OpenAI com a API KEY
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Configurar chave da API OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
@@ -39,74 +39,76 @@ perguntas = [
     {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
 ]
 
-# Sessões para armazenar respostas
 sessions = {}
-
-# Mensagem de boas-vindas multilíngue
-saudacao_inicial = """
-Olá! Hello! Ciao! Hola! Bonjour! こんにちは! مرحبا! 👋\nDiga olá no seu idioma para começarmos.
-"""
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
+@app.post("/detectar/")
+async def detectar_idioma(texto: str = Form(...)):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Detect the language of the following text and reply only with the ISO 639-1 language code (e.g., en, pt, es, fr, de)."},
+                {"role": "user", "content": texto}
+            ],
+            temperature=0,
+            max_tokens=10
+        )
+        idioma = response["choices"][0]["message"]["content"].strip().lower()
+    except Exception:
+        idioma = "en"  # Default para inglês se falhar
+    return {"idioma": idioma}
+
 @app.post("/perguntar/")
 async def perguntar(indice: int = Form(...)):
-    if indice == 0:
-        return {"pergunta": saudacao_inicial}
+    if indice < len(perguntas):
+        return perguntas[indice]
     else:
-        return {"mensagem": "Triagem iniciada."}
+        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
 
 @app.post("/responder/")
-async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
-    if session_id not in sessions:
-        sessions[session_id] = {"respostas": {}, "idioma": resposta_usuario}
-        return {"pergunta": "Detected language! Let's begin the triage.", "continuar": True}
-
-    # Sessão já iniciada
-    idioma_usuario = sessions[session_id]["idioma"]
-    pergunta_info = perguntas[indice - 1]
-
+async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...), idioma: str = Form(...)):
+    pergunta_info = perguntas[indice]
     prompt = f"""
-You are a virtual assistant specialized in endodontic triage.
+You are a dental assistant.
 
-Always respond in the user's language: {idioma_usuario}
-
-Map the user response to one of the possible options.
+Interpret the user response and match it to one of the possible options below.
 
 Question: {pergunta_info['pergunta']}
 Options: {', '.join(pergunta_info['opcoes'])}
-User Response: {resposta_usuario}
+User response: {resposta_usuario}
 
-Respond with ONLY the best matching option.
+Respond only with the most appropriate option from the list.
 """
-
-    response = client.chat.completions.create(
+    response = openai.ChatCompletion.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are an endodontic diagnosis assistant."},
+            {"role": "system", "content": "You are an expert in endodontic diagnosis."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.0,
+        temperature=0,
         max_tokens=50
     )
+    resposta_interpretada = response["choices"][0]["message"]["content"].strip()
 
-    resposta_interpretada = response.choices[0].message.content.strip()
+    if session_id not in sessions:
+        sessions[session_id] = {"respostas": {}, "idioma": idioma}
 
     sessions[session_id]["respostas"][pergunta_info["campo"]] = resposta_interpretada
 
-    if indice < len(perguntas):
-        proxima_pergunta = perguntas[indice]["pergunta"]
-        return {"pergunta": proxima_pergunta, "continuar": True}
-    else:
-        return {"mensagem": "Triagem finalizada. Calculando o diagnóstico...", "continuar": False}
+    return {
+        "campo": pergunta_info["campo"],
+        "resposta_interpretada": resposta_interpretada
+    }
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
     respostas = sessions.get(session_id, {}).get("respostas", {})
-    idioma_usuario = sessions.get(session_id, {}).get("idioma", "en")
+    idioma = sessions.get(session_id, {}).get("idioma", "en")
 
     filtro = (
         (df["DOR"] == respostas.get("DOR")) &
@@ -116,33 +118,33 @@ async def diagnostico(session_id: str = Form(...)):
         (df["PALPAÇÃO"] == respostas.get("PALPAÇÃO")) &
         (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
     )
-    resultado = df[filtro]
 
+    resultado = df[filtro]
     if not resultado.empty:
         diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
         diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
 
-        prompt = f"""
-Summarize the following endodontic diagnosis and complementary diagnosis to the patient:
+        explicacao_prompt = f"""
+Explain in a clear, simple way the following endodontic diagnosis, considering the user speaks {idioma}:
 
-Diagnosis: {diagnostico}
-Complementary Diagnosis: {diagnostico_complementar}
-
-Respond in {idioma_usuario}.
+Main diagnosis: {diagnostico}
+Complementary diagnosis: {diagnostico_complementar}
 """
-        explanation = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You are an expert in endodontics."},
+                {"role": "user", "content": explicacao_prompt}
             ],
             temperature=0.5,
             max_tokens=300
-        ).choices[0].message.content.strip()
+        )
+        explicacao = response["choices"][0]["message"]["content"].strip()
 
         return {
             "diagnostico": diagnostico,
             "diagnostico_complementar": diagnostico_complementar,
-            "explicacao": explanation
+            "explicacao": explicacao
         }
     else:
         return {"erro": "Diagnóstico não encontrado."}
