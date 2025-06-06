@@ -22,7 +22,7 @@
         sessionStorage.setItem("session_id", sessionId);
         let userLanguage = "en";
         let onboarding = true;
-        let typingTimeout;
+        let waitingConfirmation = false;
 
         function addMessage(message, sender) {
             const messagesDiv = document.getElementById("messages");
@@ -106,43 +106,19 @@
             return data;
         }
 
-        document.getElementById("chat-form").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const userInput = document.getElementById("user-input");
-            const userMessage = userInput.value.trim();
-            if (!userMessage) return;
-
-            addMessage(userMessage, "user");
-
-            if (onboarding) {
-                // Detecta idioma na primeira interação
-                userLanguage = await detectLanguage(userMessage);
-                onboarding = false;
-
-                showTyping();
-                await delay(1000);
-                removeTyping();
-
-                const firstQuestion = await perguntar();
-                addMessage(firstQuestion, "bot");
-            } else {
-                showTyping();
-                await delay(1000);
-                const data = await responder(indice, userMessage);
-                removeTyping();
-
-                showTyping();
-                await delay(1000);
-                removeTyping();
-                addMessage(`Você quis dizer: ${data.resposta_interpretada}? (sim/não)`, "bot");
-
-                waitingConfirmation = true;
-            }
-
-            userInput.value = "";
-        });
-
-        let waitingConfirmation = false;
+        async function traduzir(texto, idioma) {
+            const response = await fetch("https://libretranslate.de/translate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    q: texto,
+                    source: "en",
+                    target: idioma
+                })
+            });
+            const data = await response.json();
+            return data.translatedText;
+        }
 
         document.getElementById("chat-form").addEventListener("submit", async (e) => {
             e.preventDefault();
@@ -177,7 +153,10 @@
                         if (resultado.diagnostico) {
                             addMessage(`🦷 Diagnóstico: ${resultado.diagnostico}`, "bot");
                             addMessage(`📚 Diagnóstico Complementar: ${resultado.diagnostico_complementar}`, "bot");
-                            addMessage("Este diagnóstico foi baseado nas respostas fornecidas na triagem e destina-se a apoiar a avaliação clínica. Consulte um especialista para confirmação e tratamento adequado.", "bot");
+
+                            const explicacaoEn = "This diagnosis was based on the provided triage responses and is intended to support clinical assessment. Please consult a specialist for confirmation and appropriate treatment.";
+                            const explicacaoTraduzida = await traduzir(explicacaoEn, userLanguage);
+                            addMessage(explicacaoTraduzida, "bot");
                         } else {
                             addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
                         }
