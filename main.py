@@ -78,15 +78,21 @@ Responda apenas com a opção mais adequada da lista.
     )
     resposta_interpretada = response.choices[0].message.content.strip()
 
-    # Guarda as respostas por sessão
     if session_id not in sessions:
         sessions[session_id] = {}
-    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
 
     return {
         "campo": pergunta_info["campo"],
         "resposta_interpretada": resposta_interpretada
     }
+
+@app.post("/confirmar/")
+async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
+    pergunta_info = perguntas[indice]
+    if session_id not in sessions:
+        sessions[session_id] = {}
+    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
+    return {"mensagem": "Resposta confirmada."}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
@@ -107,6 +113,27 @@ async def diagnostico(session_id: str = Form(...)):
         }
     else:
         return {"erro": "Diagnóstico não encontrado."}
+
+@app.post("/explicacao/")
+async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...)):
+    prompt = f"""
+Explique de forma clara e didática para um dentista recém-formado:
+
+Diagnóstico: {diagnostico}
+Diagnóstico Complementar: {diagnostico_complementar}
+
+A explicação deve ser breve, sem jargões excessivos, mas mantendo um nível técnico adequado.
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "Você é um professor de endodontia."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5,
+        max_tokens=300
+    )
+    return {"explicacao": response.choices[0].message.content.strip()}
 
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
