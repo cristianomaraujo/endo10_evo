@@ -20,6 +20,9 @@
         let indice = 0;
         const sessionId = Date.now().toString();
         sessionStorage.setItem("session_id", sessionId);
+        let userLanguage = "en";
+        let onboarding = true;
+        let typingTimeout;
 
         function addMessage(message, sender) {
             const messagesDiv = document.getElementById("messages");
@@ -27,13 +30,8 @@
             messageDiv.classList.add("message", sender);
 
             const avatar = document.createElement("img");
-            if (sender === "bot") {
-                avatar.src = "/static/img/chatbot.png";
-                avatar.alt = "Bot";
-            } else {
-                avatar.src = "/static/img/usuario.png";
-                avatar.alt = "User";
-            }
+            avatar.src = sender === "bot" ? "/static/img/chatbot.png" : "/static/img/usuario.png";
+            avatar.alt = sender === "bot" ? "Bot" : "User";
             avatar.classList.add("avatar");
 
             const text = document.createElement("div");
@@ -46,11 +44,12 @@
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        async function showTyping() {
+        function showTyping() {
+            const messagesDiv = document.getElementById("messages");
             const typingDiv = document.createElement("div");
             typingDiv.classList.add("message", "bot");
-            typingDiv.id = "typing";
-            
+            typingDiv.id = "typing-indicator";
+
             const avatar = document.createElement("img");
             avatar.src = "/static/img/chatbot.png";
             avatar.alt = "Bot";
@@ -58,41 +57,53 @@
 
             const dots = document.createElement("div");
             dots.classList.add("text");
-            dots.innerText = "...";
+            dots.innerText = "Digitando...";
 
             typingDiv.appendChild(avatar);
             typingDiv.appendChild(dots);
-
-            const messagesDiv = document.getElementById("messages");
             messagesDiv.appendChild(typingDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        async function hideTyping() {
-            const typingDiv = document.getElementById("typing");
-            if (typingDiv) {
-                typingDiv.remove();
+        function removeTyping() {
+            const typingIndicator = document.getElementById("typing-indicator");
+            if (typingIndicator) {
+                typingIndicator.remove();
             }
         }
 
-        async function iniciarChat() {
-            const welcomeMessage = `Hello! 👋 ¡Hola! 👋 Olá! 👋 Bonjour! 👋 Hallo! 👋 你好! 👋 こんにちは! 👋 안녕하세요! 👋 مرحبا! 👋 
-I am Endo10 EVO, your assistant for endodontic diagnosis 🦷.
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
 
-You can reply in your preferred language 🌍.
-Shall we begin your triage? ✅`;
-
-            addMessage(welcomeMessage, "bot");
-
-            await showTyping();
+        async function perguntar() {
             const response = await fetch(API_BASE + "/perguntar/", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `indice=${indice}`
+                body: `indice=${indice}&session_id=${sessionId}`
             });
             const data = await response.json();
-            await hideTyping();
-            addMessage(data.pergunta, "bot");
+            return data.pergunta;
+        }
+
+        async function responder(indice, resposta_usuario) {
+            const response = await fetch(API_BASE + "/responder/", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `indice=${indice}&resposta_usuario=${encodeURIComponent(resposta_usuario)}&session_id=${sessionId}`
+            });
+            const data = await response.json();
+            return data;
+        }
+
+        async function diagnostico() {
+            const response = await fetch(API_BASE + "/diagnostico/", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `session_id=${sessionId}`
+            });
+            const data = await response.json();
+            return data;
         }
 
         document.getElementById("chat-form").addEventListener("submit", async (e) => {
@@ -103,58 +114,121 @@ Shall we begin your triage? ✅`;
 
             addMessage(userMessage, "user");
 
-            await showTyping();
-            const response = await fetch(API_BASE + "/responder/", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
-            });
-            const data = await response.json();
-            await hideTyping();
+            if (onboarding) {
+                // Detecta idioma na primeira interação
+                userLanguage = await detectLanguage(userMessage);
+                onboarding = false;
 
-            indice += 1;
+                showTyping();
+                await delay(1000);
+                removeTyping();
 
-            await showTyping();
-            const proximaPergunta = await fetch(API_BASE + "/perguntar/", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `indice=${indice}`
-            });
-            const perguntaData = await proximaPergunta.json();
-            await hideTyping();
-
-            if (perguntaData.mensagem) {
-                addMessage(perguntaData.mensagem, "bot");
-
-                await showTyping();
-                const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: `session_id=${sessionId}`
-                });
-                const diagnosticoData = await responseDiagnostico.json();
-                await hideTyping();
-
-                if (diagnosticoData.diagnostico) {
-                    addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
-                    addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
-                    addMessage(`ℹ️ Explanation: ${diagnosticoData.explicacao}`, "bot");
-                } else {
-                    addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
-                }
+                const firstQuestion = await perguntar();
+                addMessage(firstQuestion, "bot");
             } else {
-                addMessage(perguntaData.pergunta, "bot");
+                showTyping();
+                await delay(1000);
+                const data = await responder(indice, userMessage);
+                removeTyping();
+
+                showTyping();
+                await delay(1000);
+                removeTyping();
+                addMessage(`Você quis dizer: ${data.resposta_interpretada}? (sim/não)`, "bot");
+
+                waitingConfirmation = true;
             }
 
             userInput.value = "";
         });
+
+        let waitingConfirmation = false;
+
+        document.getElementById("chat-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const userInput = document.getElementById("user-input");
+            const userMessage = userInput.value.trim();
+            if (!userMessage) return;
+
+            addMessage(userMessage, "user");
+
+            if (onboarding) {
+                userLanguage = await detectLanguage(userMessage);
+                onboarding = false;
+
+                showTyping();
+                await delay(1000);
+                removeTyping();
+
+                const firstQuestion = await perguntar();
+                addMessage(firstQuestion, "bot");
+            } else if (waitingConfirmation) {
+                if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes") {
+                    indice++;
+                    showTyping();
+                    await delay(1000);
+                    removeTyping();
+
+                    const proximaPergunta = await perguntar();
+                    if (proximaPergunta) {
+                        addMessage(proximaPergunta, "bot");
+                    } else {
+                        const resultado = await diagnostico();
+                        if (resultado.diagnostico) {
+                            addMessage(`🦷 Diagnóstico: ${resultado.diagnostico}`, "bot");
+                            addMessage(`📚 Diagnóstico Complementar: ${resultado.diagnostico_complementar}`, "bot");
+                            addMessage("Este diagnóstico foi baseado nas respostas fornecidas na triagem e destina-se a apoiar a avaliação clínica. Consulte um especialista para confirmação e tratamento adequado.", "bot");
+                        } else {
+                            addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
+                        }
+                    }
+                    waitingConfirmation = false;
+                } else {
+                    addMessage("Por favor, digite novamente sua resposta:", "bot");
+                    waitingConfirmation = false;
+                }
+            } else {
+                showTyping();
+                await delay(1000);
+                const data = await responder(indice, userMessage);
+                removeTyping();
+
+                showTyping();
+                await delay(1000);
+                removeTyping();
+                addMessage(`Você quis dizer: ${data.resposta_interpretada}? (sim/não)`, "bot");
+
+                waitingConfirmation = true;
+            }
+
+            userInput.value = "";
+        });
+
+        async function detectLanguage(text) {
+            const response = await fetch("https://libretranslate.de/detect", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ q: text })
+            });
+            const data = await response.json();
+            return data[0]?.language || "en";
+        }
 
         document.getElementById("download-btn").addEventListener("click", () => {
             const sessionId = sessionStorage.getItem("session_id");
             window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
         });
 
-        iniciarChat();
+        async function saudacaoInicial() {
+            const mensagem = `Hello! 👋 ¡Hola! 👋 Olá! 👋 Bonjour! 👋 Hallo! 👋 你好! 👋 こんにちは! 👋 안녕하세요! 👋 مرحبا! 👋
+I am Endo10 EVO, your assistant for endodontic diagnosis 🦷✨.
+You can reply in your preferred language 🌍.
+Shall we begin your triage? ✅`;
+
+            addMessage(mensagem, "bot");
+        }
+
+        saudacaoInicial();
     </script>
 </body>
 </html>
