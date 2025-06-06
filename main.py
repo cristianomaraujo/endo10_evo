@@ -32,44 +32,44 @@ df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 # Perguntas da triagem
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
-    {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?",
-     "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
-    {"campo": "VITALIDADE PULPAR", "pergunta": "Qual é a condição da vitalidade pulpar do dente?",
-     "opcoes": ["Normal", "Alterado", "Negativo"]},
-    {"campo": "PERCUSSÃO", "pergunta": "O dente é sensível à percussão?",
-     "opcoes": ["Não se aplica", "Sensível", "Normal"]},
-    {"campo": "PALPAÇÃO", "pergunta": "Durante a palpação, o que foi observado no dente?",
-     "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
-    {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?",
-     "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
+    {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
+    {"campo": "VITALIDADE PULPAR", "pergunta": "Qual é a condição da vitalidade pulpar do dente?", "opcoes": ["Normal", "Alterado", "Negativo"]},
+    {"campo": "PERCUSSÃO", "pergunta": "O dente é sensível à percussão?", "opcoes": ["Não se aplica", "Sensível", "Normal"]},
+    {"campo": "PALPAÇÃO", "pergunta": "Durante a palpação, o que foi observado no dente?", "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
+    {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
 ]
 
 sessions = {}
-
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
-
 @app.post("/detectar_idioma/")
 async def detectar_idioma(mensagem_usuario: str = Form(...), session_id: str = Form(...)):
     prompt = f"""
-Detecte o idioma da seguinte frase e responda apenas com o nome do idioma em inglês (por exemplo, Portuguese, English, Spanish, German, etc.). Se não conseguir identificar, responda 'Unknown'.
+Detect the language of the following phrase and reply ONLY with the language name in English (e.g., Portuguese, English, Spanish, German, etc.). 
+If you cannot detect it, respond exactly with 'Unknown'.
 
-Frase: "{mensagem_usuario}"
+Phrase: "{mensagem_usuario}"
 """
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "Você é um assistente que detecta idiomas."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.0,
-        max_tokens=10
-    )
-    idioma = response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a language detector."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.0,
+            max_tokens=10
+        )
+        idioma = response.choices[0].message.content.strip()
+
+        if not idioma or idioma.lower() == "unknown":
+            idioma = "English"  # Default fallback
+    except Exception as e:
+        idioma = "English"
 
     if session_id not in sessions:
         sessions[session_id] = {}
@@ -77,34 +77,35 @@ Frase: "{mensagem_usuario}"
     sessions[session_id]['idioma'] = idioma
     return {"idioma": idioma}
 
-
 @app.post("/perguntar/")
 async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
-    idioma = sessions.get(session_id, {}).get('idioma', 'Portuguese')
-
+    idioma = sessions.get(session_id, {}).get('idioma', 'English')
     if indice < len(perguntas):
-        pergunta_pt = perguntas[indice]["pergunta"]
+        pergunta_original = perguntas[indice]['pergunta']
 
-        # Traduzir a pergunta
+        # Prompt para traduzir a pergunta para o idioma do usuário
         prompt = f"""
-Translate the following question to {idioma}. Return only the translation, without any comments or extra information.
+Translate the following medical question to {idioma}:
 
-Question: "{pergunta_pt}"
+"{pergunta_original}"
 """
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a translator specialized in dental healthcare conversations."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
-            max_tokens=100
-        )
-        pergunta_traduzida = response.choices[0].message.content.strip()
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a medical translator."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.0,
+                max_tokens=200
+            )
+            pergunta_traduzida = response.choices[0].message.content.strip()
+        except Exception as e:
+            pergunta_traduzida = pergunta_original  # fallback: original em português
+
         return {"pergunta": pergunta_traduzida}
     else:
         return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
-
 
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
@@ -136,7 +137,6 @@ Responda apenas com a opção mais adequada da lista.
         "resposta_interpretada": resposta_interpretada
     }
 
-
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
     pergunta_info = perguntas[indice]
@@ -147,17 +147,16 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
     sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
     return {"mensagem": "Resposta confirmada."}
 
-
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
     respostas = sessions.get(session_id, {})
     filtro = (
-            (df["DOR"] == respostas.get("DOR")) &
-            (df["APARECIMENTO"] == respostas.get("APARECIMENTO")) &
-            (df["VITALIDADE PULPAR"] == respostas.get("VITALIDADE PULPAR")) &
-            (df["PERCUSSÃO"] == respostas.get("PERCUSSÃO")) &
-            (df["PALPAÇÃO"] == respostas.get("PALPAÇÃO")) &
-            (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
+        (df["DOR"] == respostas.get("DOR")) &
+        (df["APARECIMENTO"] == respostas.get("APARECIMENTO")) &
+        (df["VITALIDADE PULPAR"] == respostas.get("VITALIDADE PULPAR")) &
+        (df["PERCUSSÃO"] == respostas.get("PERCUSSÃO")) &
+        (df["PALPAÇÃO"] == respostas.get("PALPAÇÃO")) &
+        (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
     )
     resultado = df[filtro]
     if not resultado.empty:
@@ -167,7 +166,6 @@ async def diagnostico(session_id: str = Form(...)):
         }
     else:
         return {"erro": "Diagnóstico não encontrado."}
-
 
 @app.post("/explicacao/")
 async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...)):
@@ -190,7 +188,6 @@ A explicação deve ser clara, sem termos excessivamente técnicos, e apresentar
     explicacao = response.choices[0].message.content.strip()
     return JSONResponse(content={"explicacao": explicacao})
 
-
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
     respostas = sessions.get(session_id, {})
@@ -209,5 +206,4 @@ async def gerar_pdf(session_id: str):
     p.save()
     buffer.seek(0)
 
-    return StreamingResponse(buffer, media_type="application/pdf",
-                             headers={"Content-Disposition": "attachment;filename=relatorio_triagem_endo10evo.pdf"})
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=relatorio_triagem_endo10evo.pdf"})
