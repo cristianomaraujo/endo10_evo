@@ -20,7 +20,9 @@
         let indice = 0;
         const sessionId = Date.now().toString();
         sessionStorage.setItem("session_id", sessionId);
-        let idiomaDetectado = false; // Novo controle de idioma!
+        let idiomaDetectado = false;
+        let aguardandoConfirmacao = false;
+        let respostaIntermediaria = "";
 
         function addMessage(message, sender) {
             const messagesDiv = document.getElementById("messages");
@@ -28,13 +30,8 @@
             messageDiv.classList.add("message", sender);
 
             const avatar = document.createElement("img");
-            if (sender === "bot") {
-                avatar.src = "/static/img/chatbot.png";
-                avatar.alt = "Bot";
-            } else {
-                avatar.src = "/static/img/usuario.png";
-                avatar.alt = "User";
-            }
+            avatar.src = sender === "bot" ? "/static/img/chatbot.png" : "/static/img/usuario.png";
+            avatar.alt = sender === "bot" ? "Bot" : "User";
             avatar.classList.add("avatar");
 
             const text = document.createElement("div");
@@ -53,7 +50,7 @@
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `idioma_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
             });
-            const data = await response.json();
+            await response.json();
             idiomaDetectado = true;
             await perguntar();
         }
@@ -62,7 +59,7 @@
             const response = await fetch(API_BASE + "/perguntar/", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `indice=${indice}`
+                body: `indice=${indice}&session_id=${sessionId}`
             });
             const data = await response.json();
             if (data.pergunta) {
@@ -70,7 +67,20 @@
             } else if (data.mensagem) {
                 addMessage(data.mensagem, "bot");
 
-                // Quando terminar a triagem
+                // Diagnóstico final
+                const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: `session_id=${sessionId}`
+                });
+                const diagnosticoData = await responseDiagnostico.json();
+                if (diagnosticoData.diagnostico) {
+                    addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
+                    addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
+                    addMessage(`ℹ️ Explicação: ${diagnosticoData.explicacao}`, "bot");
+                } else {
+                    addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
+                }
                 document.getElementById("download-btn").style.display = "block";
             }
         }
@@ -81,10 +91,12 @@
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
             });
-            await response.json();
+            const data = await response.json();
 
-            indice++;
-            await perguntar();
+            // Pergunta confirmação
+            respostaIntermediaria = data.resposta_interpretada;
+            aguardandoConfirmacao = true;
+            addMessage(`Posso considerar que a resposta é: "${respostaIntermediaria}"? (Sim/Não)`, "bot");
         }
 
         document.getElementById("chat-form").addEventListener("submit", async (e) => {
@@ -97,6 +109,15 @@
 
             if (!idiomaDetectado) {
                 await enviarIdioma(userMessage);
+            } else if (aguardandoConfirmacao) {
+                if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes") {
+                    indice++;
+                    aguardandoConfirmacao = false;
+                    await perguntar();
+                } else {
+                    aguardandoConfirmacao = false;
+                    addMessage("Ok, por favor responda novamente.", "bot");
+                }
             } else {
                 await responder(userMessage);
             }
@@ -105,7 +126,6 @@
         });
 
         document.getElementById("download-btn").addEventListener("click", () => {
-            const sessionId = sessionStorage.getItem("session_id");
             window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
         });
 
