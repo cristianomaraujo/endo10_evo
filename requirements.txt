@@ -7,3 +7,4 @@ python-dotenv
 openpyxl
 reportlab
 langdetect
+googletrans==4.0.0-rc1
