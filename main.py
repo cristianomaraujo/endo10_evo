@@ -20,12 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Montar a pasta static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Instancia o cliente OpenAI com a API KEY
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
+# Perguntas da triagem
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
     {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
@@ -48,38 +52,43 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
         pergunta_info = perguntas[indice]
         idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
 
-        if idioma_usuario.lower() == "portuguese":
-            pergunta_traduzida = pergunta_info["pergunta"]
-        else:
+        pergunta_traduzida = pergunta_info["pergunta"]
+        if idioma_usuario.lower() != "portuguese":
             prompt = f"Translate the following text into {idioma_usuario}: {pergunta_info['pergunta']}"
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=100
+                messages=[{"role": "user", "content": prompt}]
             )
             pergunta_traduzida = response.choices[0].message.content.strip()
 
         return {"pergunta": pergunta_traduzida}
     else:
-        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
+        mensagem_final = "Triagem finalizada. Vamos calcular seu diagnóstico."
+        idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
+
+        if idioma_usuario.lower() != "portuguese":
+            prompt_final = f"Translate the following text into {idioma_usuario}: {mensagem_final}"
+            response_final = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt_final}]
+            )
+            mensagem_final = response_final.choices[0].message.content.strip()
+
+        return {"mensagem": mensagem_final}
 
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
     if session_id not in sessions:
-        # Detect language at first response
         prompt_detect = f"Detect the language of this text: {resposta_usuario}. Only output the language name in English, like: English, Spanish, Portuguese, Italian."
         response_detect = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_detect}],
-            temperature=0.0,
-            max_tokens=10
+            messages=[{"role": "user", "content": prompt_detect}]
         )
         detected_language = response_detect.choices[0].message.content.strip()
         sessions[session_id] = {"language": detected_language}
 
     pergunta_info = perguntas[indice]
-    prompt_interpret = f"""
+    prompt = f"""
 You are an endodontic assistant.
 
 Interpret the user's answer and map it to one of the possible options.
@@ -90,52 +99,46 @@ User's answer: {resposta_usuario}
 
 Respond only with the most appropriate option from the list.
 """
-    response_interpret = client.chat.completions.create(
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a specialist in endodontic diagnosis."},
-            {"role": "user", "content": prompt_interpret}
-        ],
-        temperature=0.0,
-        max_tokens=50
+            {"role": "user", "content": prompt}
+        ]
     )
-    resposta_interpretada = response_interpret.choices[0].message.content.strip()
-
-    # Now prepare the double-check message
-    idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
-    double_check_pt = f"Baseado na sua resposta, posso considerar **{resposta_interpretada}**? (Digite: Sim ou Não)"
-
-    if idioma_usuario.lower() == "portuguese":
-        double_check = double_check_pt
-    else:
-        prompt_translate = f"Translate the following text into {idioma_usuario}: {double_check_pt}"
-        response_translate = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_translate}],
-            temperature=0.0,
-            max_tokens=150
-        )
-        double_check = response_translate.choices[0].message.content.strip()
+    resposta_interpretada = response.choices[0].message.content.strip()
 
     return {
         "campo": pergunta_info["campo"],
-        "resposta_interpretada": resposta_interpretada,
-        "double_check": double_check
+        "resposta_interpretada": resposta_interpretada
     }
 
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
     pergunta_info = perguntas[indice]
+    idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
 
     if session_id not in sessions:
         sessions[session_id] = {}
 
     sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
-    return {"mensagem": "Resposta confirmada."}
+
+    texto_confirmacao = f"Baseado na sua resposta, posso considerar **{resposta_interpretada}**? (Digite: Sim ou Não)"
+    if idioma_usuario.lower() != "portuguese":
+        prompt_conf = f"Translate the following text into {idioma_usuario}: {texto_confirmacao}"
+        response_conf = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt_conf}]
+        )
+        texto_confirmacao = response_conf.choices[0].message.content.strip()
+
+    return {"mensagem": texto_confirmacao}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
     respostas = sessions.get(session_id, {})
+    idioma_usuario = respostas.get("language", "Portuguese")
+
     filtro = (
         (df["DOR"] == respostas.get("DOR")) &
         (df["APARECIMENTO"] == respostas.get("APARECIMENTO")) &
@@ -145,16 +148,45 @@ async def diagnostico(session_id: str = Form(...)):
         (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
     )
     resultado = df[filtro]
+
     if not resultado.empty:
+        diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
+        diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+
+        if idioma_usuario.lower() != "portuguese":
+            prompt_diag = f"Translate into {idioma_usuario}: Diagnóstico: {diagnostico}"
+            prompt_compl = f"Translate into {idioma_usuario}: Diagnóstico Complementar: {diagnostico_complementar}"
+            response_diag = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt_diag}]
+            )
+            response_compl = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt_compl}]
+            )
+            diagnostico = response_diag.choices[0].message.content.strip()
+            diagnostico_complementar = response_compl.choices[0].message.content.strip()
+
         return {
-            "diagnostico": resultado.iloc[0]["DIAGNÓSTICO"],
-            "diagnostico_complementar": resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+            "diagnostico": diagnostico,
+            "diagnostico_complementar": diagnostico_complementar
         }
     else:
-        return {"erro": "Diagnóstico não encontrado."}
+        mensagem_erro = "Não consegui encontrar um diagnóstico com essas informações."
+        if idioma_usuario.lower() != "portuguese":
+            prompt_erro = f"Translate into {idioma_usuario}: {mensagem_erro}"
+            response_erro = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt_erro}]
+            )
+            mensagem_erro = response_erro.choices[0].message.content.strip()
+        return {"mensagem": mensagem_erro}
 
 @app.post("/explicacao/")
-async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...)):
+async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...), session_id: str = Form(...)):
+    respostas = sessions.get(session_id, {})
+    idioma_usuario = respostas.get("language", "Portuguese")
+
     prompt = f"""
 Explain clearly to a newly graduated dentist the following diagnosis:
 - Main Diagnosis: {diagnostico}
@@ -167,11 +199,18 @@ The explanation should be clear, without overly technical terms, and present the
         messages=[
             {"role": "system", "content": "You are an endodontics professor."},
             {"role": "user", "content": prompt}
-        ],
-        temperature=0.5,
-        max_tokens=300
+        ]
     )
     explicacao = response.choices[0].message.content.strip()
+
+    if idioma_usuario.lower() != "portuguese":
+        prompt_expl = f"Translate into {idioma_usuario}: {explicacao}"
+        response_expl = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt_expl}]
+        )
+        explicacao = response_expl.choices[0].message.content.strip()
+
     return JSONResponse(content={"explicacao": explicacao})
 
 @app.get("/pdf/{session_id}")
