@@ -3,13 +3,11 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import pandas as pd
-import openai
+from openai import OpenAI
 import os
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from langdetect import detect
-from googletrans import Translator
 
 app = FastAPI()
 
@@ -25,24 +23,29 @@ app.add_middleware(
 # Montar a pasta static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# OpenAI API Key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Instancia o cliente OpenAI com a API KEY
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
 # Perguntas da triagem
 perguntas = [
-    {"campo": "DOR", "pergunta": "Does the patient have pain?", "opcoes": ["Absent", "Present"]},
-    {"campo": "APARECIMENTO", "pergunta": "How does the pain appear?", "opcoes": ["Not applicable", "Spontaneous", "Provoked"]},
-    {"campo": "VITALIDADE PULPAR", "pergunta": "What is the condition of the pulp vitality?", "opcoes": ["Normal", "Altered", "Negative"]},
-    {"campo": "PERCUSSÃO", "pergunta": "Is the tooth sensitive to percussion?", "opcoes": ["Not applicable", "Sensitive", "Normal"]},
-    {"campo": "PALPAÇÃO", "pergunta": "What was observed during palpation?", "opcoes": ["Sensitive", "Edema", "Fistula", "Normal"]},
-    {"campo": "RADIOGRAFIA", "pergunta": "What does the radiograph show?", "opcoes": ["Normal", "Thickening", "Diffuse", "Circumscribed", "Diffuse radiopaque"]}
+    {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
+    {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
+    {"campo": "VITALIDADE PULPAR", "pergunta": "Qual é a condição da vitalidade pulpar do dente?", "opcoes": ["Normal", "Alterado", "Negativo"]},
+    {"campo": "PERCUSSÃO", "pergunta": "O dente é sensível à percussão?", "opcoes": ["Não se aplica", "Sensível", "Normal"]},
+    {"campo": "PALPAÇÃO", "pergunta": "Durante a palpação, o que foi observado no dente?", "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
+    {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
 ]
 
+# Sessões para armazenar respostas
 sessions = {}
-translator = Translator()
+
+# Mensagem de boas-vindas multilíngue
+saudacao_inicial = """
+Olá! Hello! Ciao! Hola! Bonjour! こんにちは! مرحبا! 👋\nDiga olá no seu idioma para começarmos.
+"""
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -50,78 +53,60 @@ async def root():
         return f.read()
 
 @app.post("/perguntar/")
-async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
-    if session_id not in sessions:
-        return {"mensagem": "Sorry, I didn't understand. Please say Hello (Olá, Ciao, Hallo, etc.) in your preferred language."}
-    language = sessions[session_id]["language"]
-    if indice < len(perguntas):
-        pergunta_original = perguntas[indice]["pergunta"]
-        pergunta_traduzida = translator.translate(pergunta_original, dest=language).text
-        return {"pergunta": pergunta_traduzida}
+async def perguntar(indice: int = Form(...)):
+    if indice == 0:
+        return {"pergunta": saudacao_inicial}
     else:
-        final_message = "Triage completed. Let's check your diagnosis."
-        final_translated = translator.translate(final_message, dest=language).text
-        return {"mensagem": final_translated}
+        return {"mensagem": "Triagem iniciada."}
 
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
-    # Se for o primeiro input, detectar o idioma
     if session_id not in sessions:
-        try:
-            lang_detected = detect(resposta_usuario)
-        except:
-            lang_detected = 'en'
-        sessions[session_id] = {"language": lang_detected, "answers": {}}
-        welcome_message = "Language detected. Let's start the triage!"
-        welcome_translated = translator.translate(welcome_message, dest=lang_detected).text
-        return {"campo": "language", "resposta_interpretada": welcome_translated}
+        sessions[session_id] = {"respostas": {}, "idioma": resposta_usuario}
+        return {"pergunta": "Detected language! Let's begin the triage.", "continuar": True}
 
-    language = sessions[session_id]["language"]
-    pergunta_info = perguntas[indice]
+    # Sessão já iniciada
+    idioma_usuario = sessions[session_id]["idioma"]
+    pergunta_info = perguntas[indice - 1]
 
-    # Tradução da resposta do usuário para inglês para o modelo
-    resposta_traduzida_en = translator.translate(resposta_usuario, dest='en').text
-
-    # Monta o prompt para interpretar
     prompt = f"""
-You are an assistant specialized in endodontic diagnosis.
+You are a virtual assistant specialized in endodontic triage.
 
-Your task is to interpret the user's answer and map it to one of the possible options.
+Always respond in the user's language: {idioma_usuario}
+
+Map the user response to one of the possible options.
 
 Question: {pergunta_info['pergunta']}
-Possible options: {', '.join(pergunta_info['opcoes'])}
-User's answer: {resposta_traduzida_en}
+Options: {', '.join(pergunta_info['opcoes'])}
+User Response: {resposta_usuario}
 
-Respond only with the most appropriate option from the list.
+Respond with ONLY the best matching option.
 """
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are an expert in endodontic diagnosis."},
+            {"role": "system", "content": "You are an endodontic diagnosis assistant."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.0,
         max_tokens=50
     )
-    resposta_interpretada = response['choices'][0]['message']['content'].strip()
 
-    # Double check
-    double_check_message = f"You said: '{resposta_interpretada}'. Is this correct? (Yes/No)"
-    double_check_translated = translator.translate(double_check_message, dest=language).text
+    resposta_interpretada = response.choices[0].message.content.strip()
 
-    # Guarda as respostas por sessão
-    sessions[session_id]["answers"][pergunta_info["campo"]] = resposta_interpretada
+    sessions[session_id]["respostas"][pergunta_info["campo"]] = resposta_interpretada
 
-    return {
-        "campo": pergunta_info["campo"],
-        "resposta_interpretada": double_check_translated
-    }
+    if indice < len(perguntas):
+        proxima_pergunta = perguntas[indice]["pergunta"]
+        return {"pergunta": proxima_pergunta, "continuar": True}
+    else:
+        return {"mensagem": "Triagem finalizada. Calculando o diagnóstico...", "continuar": False}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
-    respostas = sessions.get(session_id, {}).get("answers", {})
-    language = sessions[session_id]["language"]
+    respostas = sessions.get(session_id, {}).get("respostas", {})
+    idioma_usuario = sessions.get(session_id, {}).get("idioma", "en")
 
     filtro = (
         (df["DOR"] == respostas.get("DOR")) &
@@ -132,31 +117,45 @@ async def diagnostico(session_id: str = Form(...)):
         (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
     )
     resultado = df[filtro]
+
     if not resultado.empty:
         diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
-        explicacao = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+        diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
 
-        # Traduzir para o idioma do usuário
-        diagnostico_traduzido = translator.translate(f"Diagnosis: {diagnostico}", dest=language).text
-        explicacao_traduzida = translator.translate(f"Explanation: {explicacao}", dest=language).text
+        prompt = f"""
+Summarize the following endodontic diagnosis and complementary diagnosis to the patient:
+
+Diagnosis: {diagnostico}
+Complementary Diagnosis: {diagnostico_complementar}
+
+Respond in {idioma_usuario}.
+"""
+        explanation = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_tokens=300
+        ).choices[0].message.content.strip()
 
         return {
-            "diagnostico": diagnostico_traduzido,
-            "diagnostico_complementar": explicacao_traduzida
+            "diagnostico": diagnostico,
+            "diagnostico_complementar": diagnostico_complementar,
+            "explicacao": explanation
         }
     else:
-        not_found = translator.translate("No diagnosis found with the provided information.", dest=language).text
-        return {"erro": not_found}
+        return {"erro": "Diagnóstico não encontrado."}
 
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
-    respostas = sessions.get(session_id, {}).get("answers", {})
+    respostas = sessions.get(session_id, {}).get("respostas", {})
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     p.setFont("Helvetica", 12)
 
     y = 750
-    p.drawString(100, y, "Endodontic Triage Report - Endo10 EVO")
+    p.drawString(100, y, "Relatório da Triagem Endodôntica - Endo10 EVO")
     y -= 40
 
     for campo, resposta in respostas.items():
@@ -166,4 +165,4 @@ async def gerar_pdf(session_id: str):
     p.save()
     buffer.seek(0)
 
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=triage_report_endo10evo.pdf"})
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=relatorio_triagem_endo10evo.pdf"})
