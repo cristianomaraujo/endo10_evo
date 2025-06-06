@@ -20,16 +20,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar a pasta static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Instancia o cliente OpenAI com a API KEY
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Carrega planilha
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
-# Perguntas da triagem
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
     {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
@@ -50,18 +46,15 @@ async def root():
 async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
     if indice < len(perguntas):
         pergunta_info = perguntas[indice]
-        # Traduzir a pergunta antes de enviar
-        idioma_usuario = sessions.get(session_id, {}).get("language", "pt")
+        idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
 
-        if idioma_usuario == "pt":
+        if idioma_usuario.lower() == "portuguese":
             pergunta_traduzida = pergunta_info["pergunta"]
         else:
             prompt = f"Translate the following text into {idioma_usuario}: {pergunta_info['pergunta']}"
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 max_tokens=100
             )
@@ -74,13 +67,11 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
     if session_id not in sessions:
-        # Detectar idioma na primeira interação
+        # Detect language at first response
         prompt_detect = f"Detect the language of this text: {resposta_usuario}. Only output the language name in English, like: English, Spanish, Portuguese, Italian."
         response_detect = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                {"role": "user", "content": prompt_detect}
-            ],
+            messages=[{"role": "user", "content": prompt_detect}],
             temperature=0.0,
             max_tokens=10
         )
@@ -88,7 +79,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         sessions[session_id] = {"language": detected_language}
 
     pergunta_info = perguntas[indice]
-    prompt = f"""
+    prompt_interpret = f"""
 You are an endodontic assistant.
 
 Interpret the user's answer and map it to one of the possible options.
@@ -99,20 +90,37 @@ User's answer: {resposta_usuario}
 
 Respond only with the most appropriate option from the list.
 """
-    response = client.chat.completions.create(
+    response_interpret = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a specialist in endodontic diagnosis."},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": prompt_interpret}
         ],
         temperature=0.0,
         max_tokens=50
     )
-    resposta_interpretada = response.choices[0].message.content.strip()
+    resposta_interpretada = response_interpret.choices[0].message.content.strip()
+
+    # Now prepare the double-check message
+    idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
+    double_check_pt = f"Baseado na sua resposta, posso considerar **{resposta_interpretada}**? (Digite: Sim ou Não)"
+
+    if idioma_usuario.lower() == "portuguese":
+        double_check = double_check_pt
+    else:
+        prompt_translate = f"Translate the following text into {idioma_usuario}: {double_check_pt}"
+        response_translate = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt_translate}],
+            temperature=0.0,
+            max_tokens=150
+        )
+        double_check = response_translate.choices[0].message.content.strip()
 
     return {
         "campo": pergunta_info["campo"],
-        "resposta_interpretada": resposta_interpretada
+        "resposta_interpretada": resposta_interpretada,
+        "double_check": double_check
     }
 
 @app.post("/confirmar/")
