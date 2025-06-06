@@ -20,16 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar a pasta static
+# Mount static directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Configurar chave da API OpenAI
+# OpenAI API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Carrega planilha
+# Load Spreadsheet
 df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
 
-# Perguntas da triagem
+# Questions
 perguntas = [
     {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
     {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
@@ -46,69 +46,85 @@ async def root():
     with open("static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
-@app.post("/detectar/")
-async def detectar_idioma(texto: str = Form(...)):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Detect the language of the following text and reply only with the ISO 639-1 language code (e.g., en, pt, es, fr, de)."},
-                {"role": "user", "content": texto}
-            ],
-            temperature=0,
-            max_tokens=10
-        )
-        idioma = response["choices"][0]["message"]["content"].strip().lower()
-    except Exception:
-        idioma = "en"  # Default para inglês se falhar
-    return {"idioma": idioma}
-
-@app.post("/perguntar/")
-async def perguntar(indice: int = Form(...)):
-    if indice < len(perguntas):
-        return perguntas[indice]
-    else:
-        return {"mensagem": "Triagem finalizada. Vamos calcular seu diagnóstico."}
-
-@app.post("/responder/")
-async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...), idioma: str = Form(...)):
-    pergunta_info = perguntas[indice]
-    prompt = f"""
-You are a dental assistant.
-
-Interpret the user response and match it to one of the possible options below.
-
-Question: {pergunta_info['pergunta']}
-Options: {', '.join(pergunta_info['opcoes'])}
-User response: {resposta_usuario}
-
-Respond only with the most appropriate option from the list.
-"""
+async def detectar_idioma(mensagem_usuario: str):
+    prompt = f"Detect the language of this message: {mensagem_usuario}. Reply with the language name (e.g., Portuguese, English, Spanish)."
     response = openai.ChatCompletion.create(
         model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are an expert in endodontic diagnosis."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0,
-        max_tokens=50
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=10
     )
-    resposta_interpretada = response["choices"][0]["message"]["content"].strip()
+    idioma = response.choices[0].message.content.strip()
+    return idioma
 
-    if session_id not in sessions:
-        sessions[session_id] = {"respostas": {}, "idioma": idioma}
+async def traduzir_texto(texto: str, destino: str):
+    prompt = f"Translate this to {destino}: {texto}"
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=200
+    )
+    traducao = response.choices[0].message.content.strip()
+    return traducao
 
-    sessions[session_id]["respostas"][pergunta_info["campo"]] = resposta_interpretada
+@app.post("/iniciar/")
+async def iniciar(session_id: str = Form(...), saudacao_usuario: str = Form(...)):
+    idioma = await detectar_idioma(saudacao_usuario)
+    sessions[session_id] = {"idioma": idioma, "respostas": {}, "estado": "perguntando", "indice": 0}
+    pergunta_original = perguntas[0]["pergunta"]
+    pergunta_traduzida = await traduzir_texto(pergunta_original, idioma)
+    return {"pergunta": pergunta_traduzida}
 
-    return {
-        "campo": pergunta_info["campo"],
-        "resposta_interpretada": resposta_interpretada
-    }
+@app.post("/responder/")
+async def responder(session_id: str = Form(...), resposta_usuario: str = Form(...)):
+    sessao = sessions.get(session_id)
+    idioma = sessao["idioma"]
+    indice = sessao["indice"]
+    pergunta_info = perguntas[indice]
+
+    prompt = f"Classify the user's response into one of these options: {', '.join(pergunta_info['opcoes'])}. User said: {resposta_usuario}. Answer with only one of the options."
+    response = openai.ChatCompletion.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=20
+    )
+    resposta_interpretada = response.choices[0].message.content.strip()
+
+    sessao["resposta_interpretada"] = resposta_interpretada
+
+    confirmacao = await traduzir_texto(f"Você quis dizer: {resposta_interpretada}? (sim/não)", idioma)
+
+    return {"confirmacao": confirmacao}
+
+@app.post("/confirmar/")
+async def confirmar(session_id: str = Form(...), confirmacao_usuario: str = Form(...)):
+    sessao = sessions.get(session_id)
+    idioma = sessao["idioma"]
+
+    if confirmacao_usuario.strip().lower() in ["sim", "yes"]:
+        indice = sessao["indice"]
+        campo = perguntas[indice]["campo"]
+        sessao["respostas"][campo] = sessao["resposta_interpretada"]
+        sessao["indice"] += 1
+
+        if sessao["indice"] < len(perguntas):
+            nova_pergunta = perguntas[sessao["indice"]]["pergunta"]
+            pergunta_traduzida = await traduzir_texto(nova_pergunta, idioma)
+            return {"proxima_pergunta": pergunta_traduzida}
+        else:
+            return {"mensagem": await traduzir_texto("Triagem finalizada. Vamos calcular seu diagnóstico.", idioma)}
+    else:
+        pergunta = perguntas[sessao["indice"]]["pergunta"]
+        pergunta_traduzida = await traduzir_texto(pergunta, idioma)
+        return {"pergunta": pergunta_traduzida}
 
 @app.post("/diagnostico/")
 async def diagnostico(session_id: str = Form(...)):
-    respostas = sessions.get(session_id, {}).get("respostas", {})
-    idioma = sessions.get(session_id, {}).get("idioma", "en")
+    sessao = sessions.get(session_id)
+    respostas = sessao["respostas"]
+    idioma = sessao["idioma"]
 
     filtro = (
         (df["DOR"] == respostas.get("DOR")) &
@@ -123,35 +139,17 @@ async def diagnostico(session_id: str = Form(...)):
     if not resultado.empty:
         diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
         diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
-
-        explicacao_prompt = f"""
-Explain in a clear, simple way the following endodontic diagnosis, considering the user speaks {idioma}:
-
-Main diagnosis: {diagnostico}
-Complementary diagnosis: {diagnostico_complementar}
-"""
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an expert in endodontics."},
-                {"role": "user", "content": explicacao_prompt}
-            ],
-            temperature=0.5,
-            max_tokens=300
-        )
-        explicacao = response["choices"][0]["message"]["content"].strip()
-
-        return {
-            "diagnostico": diagnostico,
-            "diagnostico_complementar": diagnostico_complementar,
-            "explicacao": explicacao
-        }
+        diag_traduzido = await traduzir_texto(diagnostico, idioma)
+        diag_comp_traduzido = await traduzir_texto(diagnostico_complementar, idioma)
+        return {"diagnostico": diag_traduzido, "diagnostico_complementar": diag_comp_traduzido}
     else:
-        return {"erro": "Diagnóstico não encontrado."}
+        return {"erro": await traduzir_texto("Diagnóstico não encontrado.", idioma)}
 
 @app.get("/pdf/{session_id}")
 async def gerar_pdf(session_id: str):
-    respostas = sessions.get(session_id, {}).get("respostas", {})
+    sessao = sessions.get(session_id)
+    respostas = sessao["respostas"]
+
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     p.setFont("Helvetica", 12)
