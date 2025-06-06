@@ -6,3 +6,4 @@ python-multipart
 python-dotenv
 openpyxl
 reportlab
+langdetect
