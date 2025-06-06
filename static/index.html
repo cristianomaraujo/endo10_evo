@@ -1,110 +1,199 @@
-<script>
-  const API_BASE = "https://endo10evo-production.up.railway.app";
-  let indice = 0;
-  const sessionId = Date.now().toString();
-  sessionStorage.setItem("session_id", sessionId);
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Endo10 EVO - Diagnóstico Endodôntico</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .typing {
+      display: inline-block;
+    }
+    .typing span {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin: 0 2px;
+      background: #bbb;
+      border-radius: 50%;
+      animation: blink 1.4s infinite both;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink {
+      0%, 80%, 100% { opacity: 0; }
+      40% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="chat-container">
+    <div id="messages"></div>
+    <form id="chat-form">
+      <input type="text" id="user-input" placeholder="Digite sua resposta..." autocomplete="off" />
+      <button type="submit">Enviar</button>
+    </form>
+    <button id="download-btn">📄 Baixar PDF</button>
+  </div>
 
-  let pendingConfirmation = false;
-  let lastInterpretedAnswer = '';
-  let firstUserInputDone = false;
+  <script>
+    const API_BASE = "https://endo10evo-production.up.railway.app";
+    let indice = 0;
+    const sessionId = Date.now().toString();
+    sessionStorage.setItem("session_id", sessionId);
 
-  async function fetchPergunta() {
-    addTypingIndicator();
-    const response = await fetch(API_BASE + "/perguntar/", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `indice=${indice}`
-    });
-    const data = await response.json();
-    removeTypingIndicator();
+    let pendingConfirmation = false;
+    let lastInterpretedAnswer = '';
+    let saudacaoRespondida = false;
 
-    if (data.mensagem) {
-      addMessage(data.mensagem, "bot");
+    function addMessage(message, sender) {
+      const messagesDiv = document.getElementById("messages");
+      const messageDiv = document.createElement("div");
+      messageDiv.classList.add("message", sender);
 
+      const avatar = document.createElement("img");
+      avatar.src = sender === "bot" ? "/static/img/chatbot.png" : "/static/img/usuario.png";
+      avatar.alt = sender === "bot" ? "Bot" : "User";
+      avatar.classList.add("avatar");
+
+      const text = document.createElement("div");
+      text.classList.add("text");
+      text.innerText = message;
+
+      messageDiv.appendChild(avatar);
+      messageDiv.appendChild(text);
+      messagesDiv.appendChild(messageDiv);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function addTypingIndicator() {
+      const messagesDiv = document.getElementById("messages");
+      const typingDiv = document.createElement("div");
+      typingDiv.classList.add("message", "bot");
+      typingDiv.setAttribute("id", "typing");
+
+      const avatar = document.createElement("img");
+      avatar.src = "/static/img/chatbot.png";
+      avatar.alt = "Bot";
+      avatar.classList.add("avatar");
+
+      const text = document.createElement("div");
+      text.classList.add("text");
+      text.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+
+      typingDiv.appendChild(avatar);
+      typingDiv.appendChild(text);
+      messagesDiv.appendChild(typingDiv);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function removeTypingIndicator() {
+      const typingDiv = document.getElementById("typing");
+      if (typingDiv) typingDiv.remove();
+    }
+
+    async function iniciarChat() {
+      addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! \n\nI am Endo10 EVO, your assistant for endodontic diagnosis. Please greet me in your preferred language. 🌎", "bot");
+    }
+
+    async function fetchPergunta() {
       addTypingIndicator();
-      const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
+      const response = await fetch(API_BASE + "/perguntar/", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `indice=${indice}`
+      });
+      const data = await response.json();
+      removeTypingIndicator();
+
+      if (data.mensagem) {
+        addMessage(data.mensagem, "bot");
+        await fetchDiagnostico();
+      } else {
+        addMessage(data.pergunta, "bot");
+      }
+    }
+
+    async function fetchDiagnostico() {
+      addTypingIndicator();
+      const response = await fetch(API_BASE + "/diagnostico/", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `session_id=${sessionId}`
       });
-      const diagnosticoData = await responseDiagnostico.json();
+      const diagnosticoData = await response.json();
       removeTypingIndicator();
 
       if (diagnosticoData.diagnostico) {
         addMessage(`🦷 Diagnóstico: ${diagnosticoData.diagnostico}`, "bot");
         addMessage(`📚 Diagnóstico Complementar: ${diagnosticoData.diagnostico_complementar}`, "bot");
-
-        addTypingIndicator();
-        const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}`
-        });
-        const explicacaoData = await explicacaoResponse.json();
-        removeTypingIndicator();
-
-        addMessage(`📝 Explicação: ${explicacaoData.explicacao}`, "bot");
+        await fetchExplicacao(diagnosticoData);
       } else {
         addMessage("Não consegui encontrar um diagnóstico com essas informações.", "bot");
       }
-    } else {
-      addMessage(data.pergunta, "bot");
     }
-  }
 
-  document.getElementById("chat-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const userInput = document.getElementById("user-input");
-    const userMessage = userInput.value.trim();
-    if (!userMessage) return;
-
-    addMessage(userMessage, "user");
-
-    if (!firstUserInputDone) {
-      firstUserInputDone = true;
-      await fetchPergunta();
-    } else if (!pendingConfirmation) {
+    async function fetchExplicacao(diagnosticoData) {
       addTypingIndicator();
-      const response = await fetch(API_BASE + "/responder/", {
+      const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
+        body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}`
       });
-      const data = await response.json();
+      const explicacaoData = await explicacaoResponse.json();
       removeTypingIndicator();
 
-      lastInterpretedAnswer = data.resposta_interpretada;
-      pendingConfirmation = true;
-
-      addMessage(`Baseado na sua resposta, posso considerar **${lastInterpretedAnswer}**? (Digite: Sim ou Não)`, "bot");
-    } else {
-      if (userMessage.toLowerCase() === "sim") {
-        await fetch(API_BASE + "/confirmar/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
-        });
-
-        indice += 1;
-        pendingConfirmation = false;
-        await fetchPergunta();
-      } else {
-        pendingConfirmation = false;
-        await fetchPergunta();
-      }
+      addMessage(`📝 Explicação: ${explicacaoData.explicacao}`, "bot");
     }
 
-    userInput.value = "";
-  });
+    document.getElementById("chat-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const userInput = document.getElementById("user-input");
+      const userMessage = userInput.value.trim();
+      if (!userMessage) return;
 
-  document.getElementById("download-btn").addEventListener("click", () => {
-    const sessionId = sessionStorage.getItem("session_id");
-    window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
-  });
+      addMessage(userMessage, "user");
 
-  async function iniciarChat() {
-    addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! I am Endo10 EVO, your assistant for endodontic diagnosis. Please start by greeting me in your preferred language, and we will continue our conversation in that language. ✅", "bot");
-  }
+      if (!saudacaoRespondida) {
+        saudacaoRespondida = true;
+        await fetchPergunta();
+      } else if (!pendingConfirmation) {
+        addTypingIndicator();
+        const response = await fetch(API_BASE + "/responder/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
+        });
+        const data = await response.json();
+        removeTypingIndicator();
 
-  iniciarChat();
-</script>
+        lastInterpretedAnswer = data.resposta_interpretada;
+        pendingConfirmation = true;
+        addMessage(`Baseado na sua resposta, posso considerar **${lastInterpretedAnswer}**? (Digite: Sim ou Não)`, "bot");
+      } else {
+        if (userMessage.toLowerCase() === "sim") {
+          await fetch(API_BASE + "/confirmar/", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
+          });
+
+          indice += 1;
+          pendingConfirmation = false;
+          await fetchPergunta();
+        } else {
+          pendingConfirmation = false;
+          await fetchPergunta();
+        }
+      }
+
+      userInput.value = "";
+    });
+
+    document.getElementById("download-btn").addEventListener("click", () => {
+      window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
+    });
+
+    iniciarChat();
+  </script>
+</body>
+</html>
