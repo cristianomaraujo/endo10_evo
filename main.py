@@ -38,7 +38,7 @@ if not EXCEL_FILE.exists():
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # depois você pode restringir ao domínio do frontend
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,13 +66,11 @@ for col in df.columns:
     if df[col].dtype == "object":
         df[col] = df[col].astype(str).fillna("").str.strip()
 
-# Compatibilidade com nomes antigos/variáveis
 if "PULPT VITALITY" in df.columns and "PULP VITALITY" not in df.columns:
     df = df.rename(columns={"PULPT VITALITY": "PULP VITALITY"})
 
 # =========================
 # QUESTIONS
-# Valores canônicos internos em inglês
 # =========================
 questions = [
     {
@@ -138,7 +136,6 @@ questions = [
 # =========================
 sessions = {}
 
-
 # =========================
 # HELPERS
 # =========================
@@ -157,7 +154,7 @@ def create_session_if_needed(session_id: str):
     if session_id not in sessions:
         sessions[session_id] = {
             "language": None,
-            "stage": "greeting",  # greeting -> triage -> completed
+            "stage": "greeting",
             "current_question": 0,
             "answers": {},
             "pending_answer": None,
@@ -192,7 +189,7 @@ def translate_text(text: str, target_language: str) -> str:
     try:
         prompt = (
             f"Translate the following text into {target_language}. "
-            "Keep the meaning clear and natural. "
+            "Keep the meaning clear, professional, and natural. "
             "Preserve line breaks and list structure.\n\n"
             f"{text}"
         )
@@ -224,19 +221,11 @@ def is_no(text: str) -> bool:
     value = normalize_text(text)
     no_values = {
         "no", "n", "nope", "negative",
-        "nao", "não", "nunca",
+        "nao", "não",
         "non",
         "nein"
     }
     return value in no_values
-
-
-def get_current_question():
-    return questions[sessions_current()["current_question"]]
-
-
-def sessions_current():
-    raise RuntimeError("This helper should not be called directly without session context.")
 
 
 def get_question_by_index(index: int):
@@ -251,6 +240,22 @@ def build_question_text(index: int, language: str) -> str:
     for opt in q["options"]:
         base_text += f"{opt['value']} - {opt['description']}\n"
     return translate_text(base_text.strip(), language)
+
+
+def build_intro_and_first_question(language: str) -> str:
+    intro_text = """
+Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.
+
+This system conducts a structured clinical screening based on signs, symptoms, and complementary examination findings. At the end of the process, a diagnostic suggestion will be presented according to the reference nomenclature adopted by the system.
+
+The variables will be presented sequentially. At each step, select the option that best represents the clinical findings of the case under evaluation.
+
+We will begin with the first variable.
+""".strip()
+
+    intro_text = translate_text(intro_text, language)
+    first_question = build_question_text(0, language)
+    return f"{intro_text}\n\n{first_question}"
 
 
 def build_confirmation_text(value: str, language: str) -> str:
@@ -275,8 +280,7 @@ def build_incomplete_message(language: str) -> str:
 
 def build_greeting_message(language: str) -> str:
     text = (
-        "Hello! I am Endo10 EVO, your assistant for endodontic diagnosis. "
-        "I will guide you through a structured clinical screening."
+        "Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics."
     )
     return translate_text(text, language)
 
@@ -391,7 +395,6 @@ async def health():
 
 # =========================
 # PERGUNTAR
-# Compatível com frontend antigo
 # =========================
 @app.post("/perguntar/")
 async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
@@ -415,7 +418,6 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
 
 # =========================
 # RESPONDER
-# Compatível com frontend antigo
 # =========================
 @app.post("/responder/")
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
@@ -429,11 +431,11 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
     language = session["language"]
 
-    # Se ainda está na fase de saudação, não interpreta como dado clínico
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
-        pergunta_texto = build_question_text(0, language)
+
+        intro_and_question = build_intro_and_first_question(language)
 
         session["pending_answer"] = {
             "type": "FLOW",
@@ -443,11 +445,10 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         return {
             "campo": "__FLOW__",
             "resposta_interpretada": "START_SCREENING",
-            "mensagem": pergunta_texto,
-            "pergunta": pergunta_texto
+            "mensagem": intro_and_question,
+            "pergunta": intro_and_question
         }
 
-    # Se há resposta pendente e o usuário respondeu yes/no
     if session["pending_answer"] is not None:
         if is_yes(user_text):
             pending = session["pending_answer"]
@@ -498,7 +499,6 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
                 "pergunta": current_question_text
             }
 
-    # Se já completou e o usuário continua digitando
     if session["stage"] == "completed":
         final_message = build_final_message(language)
         return {
@@ -507,7 +507,6 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "mensagem": final_message
         }
 
-    # Interpretação normal da resposta clínica
     current_index = session["current_question"]
     if current_index >= len(questions):
         session["stage"] = "completed"
@@ -549,7 +548,6 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
 # =========================
 # CONFIRMAR
-# Compatível com frontend antigo
 # =========================
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
@@ -559,16 +557,17 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
 
     interpreted = (resposta_interpretada or "").strip()
 
-    # Fluxos especiais para manter o frontend antigo funcionando
     if interpreted in {"START_SCREENING", "ASK_NEXT", "REASK_CURRENT"}:
-        texto = build_question_text(session["current_question"], language)
+        if session["stage"] == "triage" and session["current_question"] == 0 and session["pending_answer"] is not None:
+            texto = build_intro_and_first_question(language)
+        else:
+            texto = build_question_text(session["current_question"], language)
         return {"mensagem": texto, "pergunta": texto}
 
     if interpreted == "READY_FOR_DIAGNOSIS":
         texto = build_final_message(language)
         return {"mensagem": texto}
 
-    # Confirmação normal
     texto_confirmacao = build_confirmation_text(interpreted, language)
     return {"mensagem": texto_confirmacao}
 
@@ -615,7 +614,6 @@ async def diagnostico(session_id: str = Form(...)):
         "COMPLEMENTARY DIAGNOSIS": complementary_diagnosis
     }
 
-    # Mantém chaves novas e antigas por compatibilidade
     return {
         "diagnosis_aae_2009_2013": diagnosis_aae_2009_2013,
         "diagnosis_aae_ese_2025": diagnosis_aae_ese_2025,
@@ -627,7 +625,6 @@ async def diagnostico(session_id: str = Form(...)):
 
 # =========================
 # EXPLICACAO
-# Aceita tanto os nomes novos quanto os antigos
 # =========================
 @app.post("/explicacao/")
 async def explicacao(
@@ -659,10 +656,9 @@ Explain clearly to a newly graduated dentist the following endodontic diagnostic
 
 Write the entire answer in {language}.
 Do not switch languages.
-Be objective, clinically coherent, and easy to understand.
-
-If there are two nomenclatures, explain that they refer to different diagnostic naming systems.
-If there is a complementary diagnosis, explain what it means in practical clinical terms.
+Use a professional and clinically coherent tone.
+If there are two nomenclatures, explain that they correspond to different diagnostic classification systems.
+If there is a complementary diagnosis, explain its practical clinical meaning.
 
 Diagnostic result:
 - Diagnosis according to AAE nomenclature 2009/2013: {diag_2009}
