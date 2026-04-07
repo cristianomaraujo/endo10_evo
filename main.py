@@ -24,7 +24,7 @@ if not OPENAI_API_KEY:
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 BASE_DIR = Path(__file__).resolve().parent
-EXCEL_FILE = BASE_DIR / "planilha_endo10.xlsx"
+EXCEL_FILE = BASE_DIR / "dataset_Abr2026.xlsx"
 SHEET_NAME = "En"
 
 if not EXCEL_FILE.exists():
@@ -64,8 +64,9 @@ except Exception as e:
 df.columns = [str(col).strip() for col in df.columns]
 for col in df.columns:
     if df[col].dtype == "object":
-        df[col] = df[col].astype(str).fillna("").str.strip()
+        df[col] = df[col].fillna("").astype(str).str.strip()
 
+# Compatibilidade caso a coluna antiga exista
 if "PULPT VITALITY" in df.columns and "PULP VITALITY" not in df.columns:
     df = df.rename(columns={"PULPT VITALITY": "PULP VITALITY"})
 
@@ -136,7 +137,7 @@ def wrap_pdf_lines(text: str, width: int = 90):
 
 
 # =========================
-# QUESTIONS + SYNONYMS
+# QUESTIONS + ALIASES
 # =========================
 questions = [
     {
@@ -149,17 +150,21 @@ questions = [
                 "aliases": [
                     "absent", "no pain", "without pain", "pain absent",
                     "ausente", "sem dor", "nao tem dor", "não tem dor",
-                    "ele esta sem dor", "ele está sem dor", "paciente sem dor"
-                ]
+                    "ele esta sem dor", "ele está sem dor",
+                    "esta sem dor", "está sem dor",
+                    "paciente sem dor", "assintomatico", "assintomático"
+                ],
             },
             {
                 "value": "Present",
                 "description": "The patient reports pain or some type of discomfort.",
                 "aliases": [
                     "present", "pain", "with pain", "has pain", "pain present",
-                    "presente", "com dor", "tem dor", "paciente com dor",
-                    "ele esta com dor", "ele está com dor", "dor"
-                ]
+                    "presente", "com dor", "tem dor", "dor presente",
+                    "ele esta com dor", "ele está com dor",
+                    "esta com dor", "está com dor",
+                    "paciente com dor", "dor", "dolorido", "dolorosa"
+                ],
             },
         ],
     },
@@ -170,26 +175,17 @@ questions = [
             {
                 "value": "Not applicable",
                 "description": "Use this when the patient does not report pain.",
-                "aliases": [
-                    "not applicable", "n/a", "not apply",
-                    "nao se aplica", "não se aplica"
-                ]
+                "aliases": ["not applicable", "n/a", "nao se aplica", "não se aplica"],
             },
             {
                 "value": "Spontaneous",
                 "description": "The pain starts spontaneously, without any provoking stimulus.",
-                "aliases": [
-                    "spontaneous", "spontaneously",
-                    "espontanea", "espontânea"
-                ]
+                "aliases": ["spontaneous", "spontaneously", "espontanea", "espontânea"],
             },
             {
                 "value": "Provoked",
                 "description": "The pain starts after a stimulus, such as cold, heat, pressure, or sweets.",
-                "aliases": [
-                    "provoked", "stimulated", "after stimulus",
-                    "provocada", "provocado", "apos estimulo", "após estímulo"
-                ]
+                "aliases": ["provoked", "provocada", "provocado", "apos estimulo", "após estímulo"],
             },
         ],
     },
@@ -200,25 +196,17 @@ questions = [
             {
                 "value": "Altered",
                 "description": "There is an exaggerated or persistent painful response to vitality testing.",
-                "aliases": [
-                    "altered",
-                    "alterada", "alterado"
-                ]
+                "aliases": ["altered", "alterada", "alterado"],
             },
             {
                 "value": "Negative",
                 "description": "There is no response to vitality testing.",
-                "aliases": [
-                    "negative", "no response",
-                    "negativo", "sem resposta"
-                ]
+                "aliases": ["negative", "negativo", "sem resposta", "no response"],
             },
             {
                 "value": "Normal",
                 "description": "There is a mild, transient response that disappears shortly after the stimulus is removed.",
-                "aliases": [
-                    "normal"
-                ]
+                "aliases": ["normal"],
             },
         ],
     },
@@ -229,26 +217,17 @@ questions = [
             {
                 "value": "Not applicable",
                 "description": "Use this when percussion testing is not applicable in the clinical situation.",
-                "aliases": [
-                    "not applicable", "n/a",
-                    "nao se aplica", "não se aplica"
-                ]
+                "aliases": ["not applicable", "n/a", "nao se aplica", "não se aplica"],
             },
             {
                 "value": "Normal",
                 "description": "There is no pain or sensitivity on percussion.",
-                "aliases": [
-                    "normal", "no pain", "not sensitive",
-                    "sem dor", "normal"
-                ]
+                "aliases": ["normal", "sem dor", "no pain", "not sensitive"],
             },
             {
                 "value": "Sensitive",
                 "description": "There is pain or sensitivity on percussion.",
-                "aliases": [
-                    "sensitive", "painful", "tender",
-                    "sensivel", "sensível", "doloroso"
-                ]
+                "aliases": ["sensitive", "sensivel", "sensível", "painful", "tender", "doloroso"],
             },
         ],
     },
@@ -259,34 +238,22 @@ questions = [
             {
                 "value": "Edema",
                 "description": "There is swelling of the adjacent tissues.",
-                "aliases": [
-                    "edema", "swelling", "swollen",
-                    "edema", "inchaco", "inchaço"
-                ]
+                "aliases": ["edema", "swelling", "swollen", "inchaco", "inchaço"],
             },
             {
                 "value": "Fistula",
                 "description": "There is a sinus tract or a mucosal/cutaneous opening communicating with the root apex.",
-                "aliases": [
-                    "fistula", "sinus tract",
-                    "fistula", "fístula", "trajeto fistuloso"
-                ]
+                "aliases": ["fistula", "fístula", "sinus tract", "trajeto fistuloso"],
             },
             {
                 "value": "Normal",
                 "description": "There is no pain on palpation.",
-                "aliases": [
-                    "normal", "no pain", "not sensitive",
-                    "normal", "sem dor"
-                ]
+                "aliases": ["normal", "sem dor", "no pain", "not sensitive"],
             },
             {
                 "value": "Sensitive",
                 "description": "There is pain or sensitivity on palpation.",
-                "aliases": [
-                    "sensitive", "painful", "tender",
-                    "sensivel", "sensível", "doloroso"
-                ]
+                "aliases": ["sensitive", "sensivel", "sensível", "painful", "tender", "doloroso"],
             },
         ],
     },
@@ -297,41 +264,27 @@ questions = [
             {
                 "value": "Circumscribed",
                 "description": "The lesion is well delimited, with relatively distinct borders.",
-                "aliases": [
-                    "circumscribed",
-                    "circunscrita"
-                ]
+                "aliases": ["circumscribed", "circunscrita"],
             },
             {
                 "value": "Diffuse",
                 "description": "The lesion has poorly defined borders or a gradual transition to adjacent tissues.",
-                "aliases": [
-                    "diffuse",
-                    "difusa"
-                ]
+                "aliases": ["diffuse", "difusa"],
             },
             {
                 "value": "Thickening",
                 "description": "There is widening or thickening of the periodontal ligament space.",
-                "aliases": [
-                    "thickening", "widening",
-                    "espessamento", "alargamento"
-                ]
+                "aliases": ["thickening", "widening", "espessamento", "alargamento"],
             },
             {
                 "value": "Normal",
                 "description": "The lamina dura is intact and the periodontal ligament space is uniform.",
-                "aliases": [
-                    "normal"
-                ]
+                "aliases": ["normal"],
             },
             {
                 "value": "Diffuse radiopaque",
                 "description": "There is a diffuse increase in radiopacity with ill-defined borders and gradual transition to adjacent bone.",
-                "aliases": [
-                    "diffuse radiopaque",
-                    "radiopaca difusa", "radiopaco difuso", "radiopaque diffuse"
-                ]
+                "aliases": ["diffuse radiopaque", "radiopaca difusa", "radiopaque diffuse", "radiopaco difuso"],
             },
         ],
     },
@@ -350,7 +303,7 @@ def create_session_if_needed(session_id: str):
             "stage": "greeting",   # greeting -> triage -> completed
             "current_question": 0,
             "answers": {},
-            "diagnosis_result": {}
+            "diagnosis_result": {},
         }
 
 
@@ -385,26 +338,28 @@ We will begin with the first variable.
 
 
 def build_final_message(language: str) -> str:
-    text = "Screening completed. We can now calculate the diagnosis."
-    return translate_text(text, language)
+    return translate_text("Screening completed. We can now calculate the diagnosis.", language)
 
 
 def build_inconsistent_message(language: str) -> str:
-    text = "I could not find a diagnosis for this exact combination of answers. Please review the selected options."
-    return translate_text(text, language)
+    return translate_text(
+        "I could not find a diagnosis for this exact combination of answers. Please review the selected options.",
+        language
+    )
 
 
 def build_incomplete_message(language: str) -> str:
-    text = "The screening is incomplete. Please answer all questions before requesting the diagnosis."
-    return translate_text(text, language)
+    return translate_text(
+        "The screening is incomplete. Please answer all questions before requesting the diagnosis.",
+        language
+    )
 
 
 def build_invalid_answer_message(index: int, language: str) -> str:
-    text = (
-        "I could not identify a valid option for this item. "
-        "Please answer using one of the available options."
+    text = translate_text(
+        "I could not identify a valid option for this item. Please answer using one of the available options.",
+        language
     )
-    text = translate_text(text, language)
     question_text = build_question_text(index, language)
     return f"{text}\n\n{question_text}"
 
@@ -413,26 +368,52 @@ def find_matching_option(question_index: int, user_text: str):
     q = get_question_by_index(question_index)
     norm_user = normalize_text(user_text)
 
-    # match exato em value
+    # 1. match exato com value
     for opt in q["options"]:
         if normalize_text(opt["value"]) == norm_user:
             return opt["value"]
 
-    # match por aliases exatos
+    # 2. match exato com aliases
     for opt in q["options"]:
         for alias in opt.get("aliases", []):
             if normalize_text(alias) == norm_user:
                 return opt["value"]
 
-    # match por inclusão simples
+    # 3. match por termo contido na resposta do usuário
+    candidates = []
     for opt in q["options"]:
-        all_terms = [opt["value"]] + opt.get("aliases", [])
-        for term in all_terms:
+        for term in [opt["value"]] + opt.get("aliases", []):
             norm_term = normalize_text(term)
-            if norm_term and norm_term in norm_user:
-                return opt["value"]
+            if norm_term:
+                candidates.append((len(norm_term), norm_term, opt["value"]))
+
+    candidates.sort(reverse=True)
+
+    for _, norm_term, opt_value in candidates:
+        if norm_term in norm_user:
+            return opt_value
+
+    # 4. regras extras por campo
+    if q["field"] == "PAIN":
+        if any(term in norm_user for term in [
+            "sem dor", "nao tem dor", "não tem dor", "assintomatico", "assintomático"
+        ]):
+            return "Absent"
+        if any(term in norm_user for term in [
+            "com dor", "tem dor", "dor presente", "dolorido", "dolorosa"
+        ]):
+            return "Present"
 
     return None
+
+
+def advance_question_index(session: dict, matched_field: str, matched_value: str):
+    # Regra clínica: se não há dor, onset = not applicable automaticamente
+    if matched_field == "PAIN" and matched_value == "Absent":
+        session["answers"]["ONSET"] = "Not applicable"
+        session["current_question"] += 2  # pula ONSET
+    else:
+        session["current_question"] += 1
 
 
 def find_diagnosis_row(answers: dict):
@@ -462,7 +443,7 @@ def find_diagnosis_row(answers: dict):
 
 
 # =========================
-# ROOT
+# ROOT / HEALTH
 # =========================
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -503,11 +484,9 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
     current_index = session["current_question"]
 
     if current_index < len(questions):
-        pergunta_texto = build_question_text(current_index, language)
-        return {"pergunta": pergunta_texto}
-    else:
-        texto = build_final_message(language)
-        return {"mensagem": texto}
+        return {"pergunta": build_question_text(current_index, language)}
+
+    return {"mensagem": build_final_message(language)}
 
 
 # =========================
@@ -525,11 +504,10 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
     language = session["language"]
 
-    # entrada inicial: saudação
+    # Entrada inicial: saudação
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
-
         intro_and_question = build_intro_and_first_question(language)
         return {
             "campo": "__FLOW__",
@@ -538,7 +516,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "pergunta": intro_and_question
         }
 
-    # se já terminou
+    # Se já terminou
     if session["stage"] == "completed":
         final_message = build_final_message(language)
         return {
@@ -548,6 +526,12 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         }
 
     current_index = session["current_question"]
+
+    # Proteção extra: se PAIN = Absent e por algum motivo ficou em ONSET, pula
+    if session["answers"].get("PAIN") == "Absent" and current_index == 1:
+        session["answers"]["ONSET"] = "Not applicable"
+        session["current_question"] = 2
+        current_index = 2
 
     if current_index >= len(questions):
         session["stage"] = "completed"
@@ -571,10 +555,13 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
     field = questions[current_index]["field"]
     session["answers"][field] = matched_option
-    session["current_question"] += 1
 
-    if session["current_question"] < len(questions):
-        next_question = build_question_text(session["current_question"], language)
+    advance_question_index(session, field, matched_option)
+
+    next_index = session["current_question"]
+
+    if next_index < len(questions):
+        next_question = build_question_text(next_index, language)
         return {
             "campo": field,
             "resposta_interpretada": matched_option,
@@ -607,23 +594,21 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
         current_index = session["current_question"]
         if current_index == 0:
             texto = build_intro_and_first_question(language)
-        else:
+        elif current_index < len(questions):
             texto = build_question_text(current_index, language)
+        else:
+            texto = build_final_message(language)
         return {"mensagem": texto, "pergunta": texto}
 
     if interpreted == "READY_FOR_DIAGNOSIS":
-        texto = build_final_message(language)
-        return {"mensagem": texto}
+        return {"mensagem": build_final_message(language)}
 
-    # frontend antigo pode ainda chamar /confirmar/
-    # aqui apenas repetimos a próxima pergunta se existir
     current_index = session["current_question"]
     if current_index < len(questions):
         texto = build_question_text(current_index, language)
         return {"mensagem": texto, "pergunta": texto}
 
-    texto = build_final_message(language)
-    return {"mensagem": texto}
+    return {"mensagem": build_final_message(language)}
 
 
 # =========================
@@ -650,9 +635,7 @@ async def diagnostico(session_id: str = Form(...)):
     row = find_diagnosis_row(session["answers"])
 
     if row is None:
-        return {
-            "mensagem": build_inconsistent_message(language)
-        }
+        return {"mensagem": build_inconsistent_message(language)}
 
     col_2009 = "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)"
     col_2025 = "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)"
