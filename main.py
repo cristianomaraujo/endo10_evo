@@ -2,8 +2,8 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import pandas as pd
 from openai import OpenAI
+import pandas as pd
 import os
 from io import BytesIO
 from reportlab.lib.pagesizes import letter
@@ -11,306 +11,345 @@ from reportlab.pdfgen import canvas
 
 app = FastAPI()
 
-# CORS Middleware
+# =========================
+# CONFIG
+# =========================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+EXCEL_FILE = "dataset_Abr2026.xlsx"
+SHEET_NAME = "En"
+
+# =========================
+# CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ajuste em produção se necessário
+    allow_origins=["*"],  # depois você pode restringir em produção
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pasta static
+# =========================
+# STATIC
+# =========================
 if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Cliente OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 # =========================
-# FUNÇÕES AUXILIARES
-# =========================
-def clean_text(value):
-    if pd.isna(value):
-        return ""
-    return str(value).strip().replace("\n", " ").replace("\r", " ")
-
-def normalize_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
-    dataframe = dataframe.copy()
-    dataframe.columns = [clean_text(col) for col in dataframe.columns]
-
-    for col in dataframe.columns:
-        if dataframe[col].dtype == "object":
-            dataframe[col] = dataframe[col].apply(clean_text)
-
-    return dataframe
-
-def get_existing_column(dataframe: pd.DataFrame, possible_names):
-    for name in possible_names:
-        if name in dataframe.columns:
-            return name
-    raise KeyError(f"None of these columns were found in the spreadsheet: {possible_names}")
-
-def translate_text(text: str, target_language: str) -> str:
-    if not text:
-        return text
-
-    if target_language.lower() == "portuguese":
-        return text
-
-    prompt = f"Translate the following text into {target_language}. Keep the meaning exact:\n\n{text}"
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-def detect_language(text: str) -> str:
-    prompt = (
-        f"Detect the language of this text: {text}. "
-        f"Only output the language name in English, such as: English, Portuguese, Spanish, Italian."
-    )
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-def safe_match_option(question_text: str, options: list, user_answer: str) -> str:
-    prompt = f"""
-You are an endodontic assistant.
-
-Interpret the user's answer and map it to exactly one of the possible options below.
-
-Question: {question_text}
-Possible options: {', '.join(options)}
-User's answer: {user_answer}
-
-Rules:
-- Return only one exact option from the list.
-- Do not explain.
-- Do not create new options.
-"""
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a specialist in endodontic diagnosis."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    interpreted = response.choices[0].message.content.strip()
-
-    if interpreted not in options:
-        raise ValueError(
-            f"The interpreted answer '{interpreted}' is not one of the allowed options: {options}"
-        )
-
-    return interpreted
-
-# =========================
-# CARREGAMENTO DA PLANILHA
+# LOAD DATA
 # =========================
 try:
-    df = pd.read_excel("dataset_Abr2026.xlsx", sheet_name="En")
-    df = normalize_dataframe(df)
+    df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME)
 except Exception as e:
-    raise RuntimeError(f"Error loading spreadsheet: {e}")
+    raise RuntimeError(f"Error loading spreadsheet '{EXCEL_FILE}' / sheet '{SHEET_NAME}': {e}")
 
-# Mapeamento robusto de colunas
-COL_PAIN = get_existing_column(df, ["PAIN"])
-COL_ONSET = get_existing_column(df, ["ONSET"])
-COL_PULP_VITALITY = get_existing_column(df, ["PULP VITALITY", "PULPT VITALITY"])
-COL_PERCUSSION = get_existing_column(df, ["PERCUSSION"])
-COL_PALPATION = get_existing_column(df, ["PALPATION"])
-COL_RADIOGRAPHY = get_existing_column(df, ["RADIOGRAPHY"])
-
-COL_DIAG_2009 = get_existing_column(df, ["DIAGNOSIS (AAE NOMENCLATURE 2009/2013)"])
-COL_DIAG_2025 = get_existing_column(df, ["DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)"])
-COL_COMP_DIAG = get_existing_column(df, ["COMPLEMENTARY DIAGNOSIS"])
-
-# Perguntas da triagem
-questions = [
-    {
-        "field": COL_PAIN,
-        "question": "Does the patient have pain?",
-        "options": ["Absent", "Present"]
-    },
-    {
-        "field": COL_ONSET,
-        "question": "How does the pain start?",
-        "options": ["Not applicable", "Spontaneous", "Provoked"]
-    },
-    {
-        "field": COL_PULP_VITALITY,
-        "question": "What is the pulp vitality condition of the tooth?",
-        "options": ["Normal", "Altered", "Alterad", "Negative"]
-    },
-    {
-        "field": COL_PERCUSSION,
-        "question": "Is the tooth sensitive to percussion?",
-        "options": ["Not applicable", "Sensitive", "Normal"]
-    },
-    {
-        "field": COL_PALPATION,
-        "question": "What was observed on palpation?",
-        "options": ["Sensitive", "Sensivel", "Edema", "Fistula", "Normal"]
-    },
-    {
-        "field": COL_RADIOGRAPHY,
-        "question": "What does the radiograph show?",
-        "options": [
-            "Normal",
-            "Thickening",
-            "Thickening of the periodontal ligament",
-            "Diffuse",
-            "Diffuse apical radiolucency",
-            "Circumscribed",
-            "Circumscribed radiolucency lesion",
-            "Diffuse radiopaque lesion",
-            "Radiopaque diffuse"
-        ]
-    }
-]
-
-sessions = {}
+# Limpeza básica
+df.columns = [str(col).strip() for col in df.columns]
+for col in df.columns:
+    if df[col].dtype == "object":
+        df[col] = df[col].astype(str).str.strip()
 
 # =========================
-# ROTAS
+# QUESTIONS
+# =========================
+questions = [
+    {
+        "field": "PAIN",
+        "question": "Pain",
+        "options": [
+            {"value": "Absent", "description": "The patient does not report pain."},
+            {"value": "Present", "description": "The patient reports pain or some type of discomfort."},
+        ],
+    },
+    {
+        "field": "ONSET",
+        "question": "Onset of pain",
+        "options": [
+            {"value": "Not applicable", "description": "Use this when the patient does not report pain."},
+            {"value": "Spontaneous", "description": "The pain starts spontaneously, without any provoking stimulus."},
+            {"value": "Provoked", "description": "The pain starts after a stimulus, such as cold, heat, pressure, or sweets."},
+        ],
+    },
+    {
+        "field": "PULP VITALITY",
+        "question": "Pulp vitality",
+        "options": [
+            {"value": "Altered", "description": "There is an exaggerated or persistent painful response to vitality testing."},
+            {"value": "Negative", "description": "There is no response to vitality testing."},
+            {"value": "Normal", "description": "There is a mild, transient response that disappears shortly after the stimulus is removed."},
+        ],
+    },
+    {
+        "field": "PERCUSSION",
+        "question": "Percussion",
+        "options": [
+            {"value": "Not applicable", "description": "Use this when percussion testing is not applicable in the clinical situation."},
+            {"value": "Normal", "description": "There is no pain or sensitivity on percussion."},
+            {"value": "Sensitive", "description": "There is pain or sensitivity on percussion."},
+        ],
+    },
+    {
+        "field": "PALPATION",
+        "question": "Palpation",
+        "options": [
+            {"value": "Edema", "description": "There is swelling of the adjacent tissues."},
+            {"value": "Fistula", "description": "There is a sinus tract or a mucosal/cutaneous opening communicating with the root apex."},
+            {"value": "Normal", "description": "There is no pain on palpation."},
+            {"value": "Sensitive", "description": "There is pain or sensitivity on palpation."},
+        ],
+    },
+    {
+        "field": "RADIOGRAPHY",
+        "question": "Radiographic finding",
+        "options": [
+            {"value": "Circumscribed", "description": "The lesion is well delimited, with relatively distinct borders."},
+            {"value": "Diffuse", "description": "The lesion has poorly defined borders or a gradual transition to the adjacent tissues."},
+            {"value": "Thickening", "description": "There is thickening or widening of the periodontal ligament space."},
+            {"value": "Normal", "description": "The lamina dura is intact and the periodontal ligament space is uniform."},
+            {"value": "Diffuse radiopaque", "description": "There is a diffuse increase in radiopacity with ill-defined borders and gradual transition to adjacent bone."},
+        ],
+    },
+]
+
+# =========================
+# SESSION STORE
+# =========================
+sessions = {}
+
+
+def create_session_if_needed(session_id: str):
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "stage": "greeting",         # greeting -> triage -> completed
+            "current_question": 0,
+            "answers": {},
+            "diagnosis_result": {}
+        }
+
+
+def get_allowed_values(question_index: int):
+    return [opt["value"] for opt in questions[question_index]["options"]]
+
+
+def get_question_payload(index: int):
+    if index < 0 or index >= len(questions):
+        raise HTTPException(status_code=400, detail="Invalid question index.")
+
+    q = questions[index]
+    return {
+        "index": index,
+        "field": q["field"],
+        "question": q["question"],
+        "options": q["options"],
+        "message": f"Question {index + 1} of {len(questions)}"
+    }
+
+
+# =========================
+# ROOT
 # =========================
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    if not os.path.exists("static/index.html"):
-        return HTMLResponse("<h1>API is running</h1>")
-    with open("static/index.html", "r", encoding="utf-8") as f:
-        return f.read()
+    if os.path.isfile("static/index.html"):
+        with open("static/index.html", "r", encoding="utf-8") as f:
+            return f.read()
 
-@app.post("/ask/")
-async def ask(index: int = Form(...), session_id: str = Form(...)):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
+    return """
+    <html>
+        <body>
+            <h2>Endo10 API is running.</h2>
+            <p>Use the API endpoints to start the screening flow.</p>
+        </body>
+    </html>
+    """
 
-    language = sessions.get(session_id, {}).get("language", "English")
 
-    if index < len(questions):
-        question_info = questions[index]
-        question_text = question_info["question"]
+# =========================
+# START / GREETING
+# =========================
+@app.post("/start/")
+async def start_chat(session_id: str = Form(...)):
+    create_session_if_needed(session_id)
 
-        if language.lower() != "english":
-            question_text = translate_text(question_text, language)
-
-        return {"question": question_text}
-    else:
-        final_message = "Screening completed. Let's calculate the diagnosis."
-        if language.lower() != "english":
-            final_message = translate_text(final_message, language)
-        return {"message": final_message}
-
-@app.post("/answer/")
-async def answer(index: int = Form(...), user_answer: str = Form(...), session_id: str = Form(...)):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
-
-    if index < 0 or index >= len(questions):
-        raise HTTPException(status_code=400, detail="Invalid question index.")
-
-    if session_id not in sessions:
-        detected_language = detect_language(user_answer)
-        sessions[session_id] = {"language": detected_language}
-
-    question_info = questions[index]
-
-    try:
-        interpreted_answer = safe_match_option(
-            question_text=question_info["question"],
-            options=question_info["options"],
-            user_answer=user_answer
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interpreting answer: {e}")
+    sessions[session_id]["stage"] = "greeting"
+    sessions[session_id]["current_question"] = 0
+    sessions[session_id]["answers"] = {}
+    sessions[session_id]["diagnosis_result"] = {}
 
     return {
-        "field": question_info["field"],
-        "interpreted_answer": interpreted_answer
+        "message": (
+            "Hello! I'm Endo10, an AI-powered assistant designed to support endodontic screening. "
+            "I will guide you through a structured sequence of clinical questions. "
+            "When you are ready, type or send 'start' to begin the screening."
+        ),
+        "stage": "greeting"
     }
 
-@app.post("/confirm/")
-async def confirm(index: int = Form(...), interpreted_answer: str = Form(...), session_id: str = Form(...)):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
 
-    if index < 0 or index >= len(questions):
-        raise HTTPException(status_code=400, detail="Invalid question index.")
+@app.post("/begin/")
+async def begin_screening(session_id: str = Form(...), user_input: str = Form(...)):
+    create_session_if_needed(session_id)
 
-    question_info = questions[index]
-    language = sessions.get(session_id, {}).get("language", "English")
+    if user_input.strip().lower() not in ["start", "begin", "go", "ok", "okay"]:
+        return {
+            "message": "Please type 'start' when you are ready to begin the screening.",
+            "stage": sessions[session_id]["stage"]
+        }
 
-    if session_id not in sessions:
-        sessions[session_id] = {"language": "English"}
+    sessions[session_id]["stage"] = "triage"
+    sessions[session_id]["current_question"] = 0
 
-    sessions[session_id][question_info["field"]] = clean_text(interpreted_answer)
+    return {
+        "message": "Screening started.",
+        "stage": "triage",
+        "question_data": get_question_payload(0)
+    }
 
-    confirmation_text = f"Based on your answer, may I record **{interpreted_answer}**? (Type: Yes or No)"
-    if language.lower() != "english":
-        confirmation_text = translate_text(confirmation_text, language)
 
-    return {"message": confirmation_text}
+# =========================
+# GET CURRENT QUESTION
+# =========================
+@app.post("/current-question/")
+async def current_question(session_id: str = Form(...)):
+    create_session_if_needed(session_id)
 
+    stage = sessions[session_id]["stage"]
+    idx = sessions[session_id]["current_question"]
+
+    if stage != "triage":
+        return {
+            "message": "The screening is not currently active.",
+            "stage": stage
+        }
+
+    if idx >= len(questions):
+        return {
+            "message": "All questions have already been answered.",
+            "stage": "completed"
+        }
+
+    return {
+        "stage": stage,
+        "question_data": get_question_payload(idx)
+    }
+
+
+# =========================
+# ANSWER QUESTION
+# =========================
+@app.post("/answer/")
+async def answer_question(
+    session_id: str = Form(...),
+    selected_value: str = Form(...)
+):
+    create_session_if_needed(session_id)
+
+    if sessions[session_id]["stage"] != "triage":
+        return {
+            "message": "The screening has not started yet. Use /begin/ first.",
+            "stage": sessions[session_id]["stage"]
+        }
+
+    idx = sessions[session_id]["current_question"]
+
+    if idx >= len(questions):
+        return {
+            "message": "All questions have already been answered.",
+            "stage": "completed"
+        }
+
+    allowed_values = get_allowed_values(idx)
+    selected_value = selected_value.strip()
+
+    if selected_value not in allowed_values:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "message": "Invalid option selected.",
+                "allowed_values": allowed_values
+            }
+        )
+
+    field = questions[idx]["field"]
+    sessions[session_id]["answers"][field] = selected_value
+    sessions[session_id]["current_question"] += 1
+
+    next_idx = sessions[session_id]["current_question"]
+
+    if next_idx < len(questions):
+        return {
+            "message": f"Answer recorded for {field}.",
+            "stage": "triage",
+            "recorded_answer": {
+                "field": field,
+                "value": selected_value
+            },
+            "next_question": get_question_payload(next_idx)
+        }
+
+    sessions[session_id]["stage"] = "completed"
+    return {
+        "message": "All questions were answered. You can now request the diagnosis.",
+        "stage": "completed",
+        "recorded_answer": {
+            "field": field,
+            "value": selected_value
+        }
+    }
+
+
+# =========================
+# DIAGNOSIS
+# =========================
 @app.post("/diagnosis/")
 async def diagnosis(session_id: str = Form(...)):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
+    create_session_if_needed(session_id)
 
-    answers = sessions.get(session_id, {})
-    language = answers.get("language", "English")
+    answers = sessions[session_id]["answers"]
 
-    pain = clean_text(answers.get(COL_PAIN, ""))
-    onset = clean_text(answers.get(COL_ONSET, ""))
-    pulp_vitality = clean_text(answers.get(COL_PULP_VITALITY, ""))
-    percussion = clean_text(answers.get(COL_PERCUSSION, ""))
-    palpation = clean_text(answers.get(COL_PALPATION, ""))
-    radiography = clean_text(answers.get(COL_RADIOGRAPHY, ""))
+    required_fields = [q["field"] for q in questions]
+    missing_fields = [field for field in required_fields if field not in answers]
+
+    if missing_fields:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "message": "The screening is incomplete.",
+                "missing_fields": missing_fields
+            }
+        )
 
     result = df[
-        (df[COL_PAIN] == pain) &
-        (df[COL_ONSET] == onset) &
-        (df[COL_PULP_VITALITY] == pulp_vitality) &
-        (df[COL_PERCUSSION] == percussion) &
-        (df[COL_PALPATION] == palpation) &
-        (df[COL_RADIOGRAPHY] == radiography)
+        (df["PAIN"] == str(answers.get("PAIN", "")).strip()) &
+        (df["ONSET"] == str(answers.get("ONSET", "")).strip()) &
+        (df["PULP VITALITY"] == str(answers.get("PULP VITALITY", "")).strip()) &
+        (df["PERCUSSION"] == str(answers.get("PERCUSSION", "")).strip()) &
+        (df["PALPATION"] == str(answers.get("PALPATION", "")).strip()) &
+        (df["RADIOGRAPHY"] == str(answers.get("RADIOGRAPHY", "")).strip())
     ]
 
     if result.empty:
-        error_message = "I could not find a diagnosis with the provided information."
-        if language.lower() != "english":
-            error_message = translate_text(error_message, language)
-        return {"message": error_message}
-
-    diagnosis_aae_2009_2013 = clean_text(result.iloc[0][COL_DIAG_2009])
-    diagnosis_aae_ese_2025 = clean_text(result.iloc[0][COL_DIAG_2025])
-    complementary_diagnosis = clean_text(result.iloc[0][COL_COMP_DIAG])
-
-    # Salvar na sessão para PDF e outros usos
-    sessions[session_id][COL_DIAG_2009] = diagnosis_aae_2009_2013
-    sessions[session_id][COL_DIAG_2025] = diagnosis_aae_ese_2025
-    sessions[session_id][COL_COMP_DIAG] = complementary_diagnosis
-
-    if language.lower() != "english":
-        label_2009 = translate_text("Diagnosis (AAE nomenclature 2009/2013)", language)
-        label_2025 = translate_text("Diagnosis (AAE/ESE nomenclature 2025)", language)
-        label_comp = translate_text("Complementary diagnosis", language)
-
-        value_2009 = translate_text(diagnosis_aae_2009_2013, language)
-        value_2025 = translate_text(diagnosis_aae_ese_2025, language)
-        value_comp = translate_text(complementary_diagnosis, language)
-
         return {
-            "diagnosis_aae_2009_2013_label": label_2009,
-            "diagnosis_aae_2009_2013": value_2009,
-            "diagnosis_aae_ese_2025_label": label_2025,
-            "diagnosis_aae_ese_2025": value_2025,
-            "complementary_diagnosis_label": label_comp,
-            "complementary_diagnosis": value_comp
+            "message": (
+                "No diagnosis was found for this exact combination of answers. "
+                "Please review the selected options and try again."
+            )
         }
+
+    diagnosis_aae_2009_2013 = str(result.iloc[0]["DIAGNOSIS (AAE NOMENCLATURE 2009/2013)"]).strip()
+    diagnosis_aae_ese_2025 = str(result.iloc[0]["DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)"]).strip()
+
+    complementary_diagnosis = ""
+    if "COMPLEMENTARY DIAGNOSIS" in result.columns:
+        complementary_diagnosis = str(result.iloc[0]["COMPLEMENTARY DIAGNOSIS"]).strip()
+
+    sessions[session_id]["diagnosis_result"] = {
+        "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)": diagnosis_aae_2009_2013,
+        "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)": diagnosis_aae_ese_2025,
+        "COMPLEMENTARY DIAGNOSIS": complementary_diagnosis,
+    }
 
     return {
         "diagnosis_aae_2009_2013": diagnosis_aae_2009_2013,
@@ -318,91 +357,117 @@ async def diagnosis(session_id: str = Form(...)):
         "complementary_diagnosis": complementary_diagnosis
     }
 
-@app.post("/explanation/")
-async def explanation(
-    diagnosis_aae_2009_2013: str = Form(...),
-    diagnosis_aae_ese_2025: str = Form(...),
-    complementary_diagnosis: str = Form(...),
-    session_id: str = Form(...)
-):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
 
-    language = sessions.get(session_id, {}).get("language", "English")
+# =========================
+# EXPLANATION
+# =========================
+@app.post("/explanation/")
+async def explanation(session_id: str = Form(...)):
+    create_session_if_needed(session_id)
+
+    diagnosis_result = sessions[session_id].get("diagnosis_result", {})
+
+    if not diagnosis_result:
+        return JSONResponse(
+            status_code=400,
+            content={"message": "No diagnosis is available yet. Run /diagnosis/ first."}
+        )
+
+    diagnosis_aae_2009_2013 = diagnosis_result.get("DIAGNOSIS (AAE NOMENCLATURE 2009/2013)", "")
+    diagnosis_aae_ese_2025 = diagnosis_result.get("DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)", "")
+    complementary_diagnosis = diagnosis_result.get("COMPLEMENTARY DIAGNOSIS", "")
 
     prompt = f"""
-Explain clearly to a newly graduated dentist the following diagnostic result:
+Explain clearly to a newly graduated dentist the following endodontic diagnostic result.
 
+Write the entire answer in English.
+Be objective, clinically coherent, and easy to understand.
+Do not switch to Portuguese.
+If the complementary diagnosis contains recommendations, explain them in plain English.
+
+Diagnostic result:
 - Diagnosis according to AAE nomenclature 2009/2013: {diagnosis_aae_2009_2013}
 - Diagnosis according to AAE/ESE nomenclature 2025: {diagnosis_aae_ese_2025}
 - Complementary diagnosis: {complementary_diagnosis}
-
-The explanation should be clear, without overly technical terms, and should present the clinical reasoning behind the diagnosis.
 """
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are an endodontics professor."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    explanation_text = response.choices[0].message.content.strip()
 
-    if language.lower() != "english":
-        explanation_text = translate_text(explanation_text, language)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are an endodontics professor."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        explanation_text = response.choices[0].message.content.strip()
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"message": f"Error generating explanation: {str(e)}"}
+        )
 
     return JSONResponse(content={"explanation": explanation_text})
 
+
+# =========================
+# RESET SESSION
+# =========================
+@app.post("/reset/")
+async def reset_session(session_id: str = Form(...)):
+    sessions[session_id] = {
+        "stage": "greeting",
+        "current_question": 0,
+        "answers": {},
+        "diagnosis_result": {}
+    }
+
+    return {"message": "Session reset successfully."}
+
+
+# =========================
+# PDF REPORT
+# =========================
 @app.get("/pdf/{session_id}")
 async def generate_pdf(session_id: str):
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required.")
+    create_session_if_needed(session_id)
 
-    answers = sessions.get(session_id, {})
-    if not answers:
-        raise HTTPException(status_code=404, detail="Session not found.")
+    answers = sessions[session_id].get("answers", {})
+    diagnosis_result = sessions[session_id].get("diagnosis_result", {})
 
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
-    p.setFont("Helvetica", 12)
+    p.setFont("Helvetica", 11)
 
-    y = 750
-    p.drawString(50, y, "Endodontic Screening Report")
-    y -= 30
+    y = 760
+    left = 50
 
-    ordered_fields = [
-        COL_PAIN,
-        COL_ONSET,
-        COL_PULP_VITALITY,
-        COL_PERCUSSION,
-        COL_PALPATION,
-        COL_RADIOGRAPHY,
-        COL_DIAG_2009,
-        COL_DIAG_2025,
-        COL_COMP_DIAG
-    ]
+    def write_line(text, step=18):
+        nonlocal y
+        p.drawString(left, y, text[:110])
+        y -= step
+        if y < 60:
+            p.showPage()
+            p.setFont("Helvetica", 11)
+            y = 760
 
-    for field in ordered_fields:
-        value = clean_text(answers.get(field, ""))
-        if value:
-            line = f"{field}: {value}"
+    write_line("Endo10 Screening Report", 24)
+    write_line(f"Session ID: {session_id}", 20)
 
-            if len(line) > 100:
-                chunks = [line[i:i+100] for i in range(0, len(line), 100)]
-                for chunk in chunks:
-                    p.drawString(50, y, chunk)
-                    y -= 18
-                    if y < 50:
-                        p.showPage()
-                        p.setFont("Helvetica", 12)
-                        y = 750
-            else:
-                p.drawString(50, y, line)
-                y -= 18
-                if y < 50:
-                    p.showPage()
-                    p.setFont("Helvetica", 12)
-                    y = 750
+    write_line("Answers:", 20)
+    for q in questions:
+        field = q["field"]
+        value = answers.get(field, "Not answered")
+        write_line(f"- {field}: {value}")
+
+    write_line("", 10)
+    write_line("Diagnostic result:", 20)
+
+    if diagnosis_result:
+        write_line(f"- Diagnosis (AAE Nomenclature 2009/2013): {diagnosis_result.get('DIAGNOSIS (AAE NOMENCLATURE 2009/2013)', '')}")
+        write_line(f"- Diagnosis (AAE/ESE Nomenclature 2025): {diagnosis_result.get('DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)', '')}")
+        write_line(f"- Complementary diagnosis: {diagnosis_result.get('COMPLEMENTARY DIAGNOSIS', '')}")
+    else:
+        write_line("No diagnosis has been generated yet.")
 
     p.save()
     buffer.seek(0)
