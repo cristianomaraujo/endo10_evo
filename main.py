@@ -70,73 +70,6 @@ if "PULPT VITALITY" in df.columns and "PULP VITALITY" not in df.columns:
     df = df.rename(columns={"PULPT VITALITY": "PULP VITALITY"})
 
 # =========================
-# QUESTIONS
-# =========================
-questions = [
-    {
-        "field": "PAIN",
-        "question": "Pain",
-        "options": [
-            {"value": "Absent", "description": "The patient does not report pain."},
-            {"value": "Present", "description": "The patient reports pain or some type of discomfort."},
-        ],
-    },
-    {
-        "field": "ONSET",
-        "question": "Onset of pain",
-        "options": [
-            {"value": "Not applicable", "description": "Use this when the patient does not report pain."},
-            {"value": "Spontaneous", "description": "The pain starts spontaneously, without any provoking stimulus."},
-            {"value": "Provoked", "description": "The pain starts after a stimulus, such as cold, heat, pressure, or sweets."},
-        ],
-    },
-    {
-        "field": "PULP VITALITY",
-        "question": "Pulp vitality",
-        "options": [
-            {"value": "Altered", "description": "There is an exaggerated or persistent painful response to vitality testing."},
-            {"value": "Negative", "description": "There is no response to vitality testing."},
-            {"value": "Normal", "description": "There is a mild, transient response that disappears shortly after the stimulus is removed."},
-        ],
-    },
-    {
-        "field": "PERCUSSION",
-        "question": "Percussion",
-        "options": [
-            {"value": "Not applicable", "description": "Use this when percussion testing is not applicable in the clinical situation."},
-            {"value": "Normal", "description": "There is no pain or sensitivity on percussion."},
-            {"value": "Sensitive", "description": "There is pain or sensitivity on percussion."},
-        ],
-    },
-    {
-        "field": "PALPATION",
-        "question": "Palpation",
-        "options": [
-            {"value": "Edema", "description": "There is swelling of the adjacent tissues."},
-            {"value": "Fistula", "description": "There is a sinus tract or a mucosal/cutaneous opening communicating with the root apex."},
-            {"value": "Normal", "description": "There is no pain on palpation."},
-            {"value": "Sensitive", "description": "There is pain or sensitivity on palpation."},
-        ],
-    },
-    {
-        "field": "RADIOGRAPHY",
-        "question": "Radiographic finding",
-        "options": [
-            {"value": "Circumscribed", "description": "The lesion is well delimited, with relatively distinct borders."},
-            {"value": "Diffuse", "description": "The lesion has poorly defined borders or a gradual transition to adjacent tissues."},
-            {"value": "Thickening", "description": "There is widening or thickening of the periodontal ligament space."},
-            {"value": "Normal", "description": "The lamina dura is intact and the periodontal ligament space is uniform."},
-            {"value": "Diffuse radiopaque", "description": "There is a diffuse increase in radiopacity with ill-defined borders and gradual transition to adjacent bone."},
-        ],
-    },
-]
-
-# =========================
-# SESSIONS
-# =========================
-sessions = {}
-
-# =========================
 # HELPERS
 # =========================
 def normalize_text(text: str) -> str:
@@ -148,18 +81,6 @@ def normalize_text(text: str) -> str:
     text = text.replace("\n", " ").replace("\r", " ")
     text = " ".join(text.split())
     return text
-
-
-def create_session_if_needed(session_id: str):
-    if session_id not in sessions:
-        sessions[session_id] = {
-            "language": None,
-            "stage": "greeting",
-            "current_question": 0,
-            "answers": {},
-            "pending_answer": None,
-            "diagnosis_result": {}
-        }
 
 
 def detect_language(text: str) -> str:
@@ -204,28 +125,233 @@ def translate_text(text: str, target_language: str) -> str:
         return text
 
 
-def is_yes(text: str) -> bool:
-    value = normalize_text(text)
-    yes_values = {
-        "yes", "y", "yeah", "yep", "ok", "okay", "confirm", "confirmed",
-        "sim", "s", "claro", "confirmo",
-        "si", "sí",
-        "oui",
-        "ja",
-        "hai"
-    }
-    return value in yes_values
+def wrap_pdf_lines(text: str, width: int = 90):
+    if not text:
+        return [""]
+    lines = []
+    for paragraph in str(text).split("\n"):
+        wrapped = textwrap.wrap(paragraph, width=width) or [""]
+        lines.extend(wrapped)
+    return lines
 
 
-def is_no(text: str) -> bool:
-    value = normalize_text(text)
-    no_values = {
-        "no", "n", "nope", "negative",
-        "nao", "não",
-        "non",
-        "nein"
-    }
-    return value in no_values
+# =========================
+# QUESTIONS + SYNONYMS
+# =========================
+questions = [
+    {
+        "field": "PAIN",
+        "question": "Pain",
+        "options": [
+            {
+                "value": "Absent",
+                "description": "The patient does not report pain.",
+                "aliases": [
+                    "absent", "no pain", "without pain", "pain absent",
+                    "ausente", "sem dor", "nao tem dor", "não tem dor",
+                    "ele esta sem dor", "ele está sem dor", "paciente sem dor"
+                ]
+            },
+            {
+                "value": "Present",
+                "description": "The patient reports pain or some type of discomfort.",
+                "aliases": [
+                    "present", "pain", "with pain", "has pain", "pain present",
+                    "presente", "com dor", "tem dor", "paciente com dor",
+                    "ele esta com dor", "ele está com dor", "dor"
+                ]
+            },
+        ],
+    },
+    {
+        "field": "ONSET",
+        "question": "Onset of pain",
+        "options": [
+            {
+                "value": "Not applicable",
+                "description": "Use this when the patient does not report pain.",
+                "aliases": [
+                    "not applicable", "n/a", "not apply",
+                    "nao se aplica", "não se aplica"
+                ]
+            },
+            {
+                "value": "Spontaneous",
+                "description": "The pain starts spontaneously, without any provoking stimulus.",
+                "aliases": [
+                    "spontaneous", "spontaneously",
+                    "espontanea", "espontânea"
+                ]
+            },
+            {
+                "value": "Provoked",
+                "description": "The pain starts after a stimulus, such as cold, heat, pressure, or sweets.",
+                "aliases": [
+                    "provoked", "stimulated", "after stimulus",
+                    "provocada", "provocado", "apos estimulo", "após estímulo"
+                ]
+            },
+        ],
+    },
+    {
+        "field": "PULP VITALITY",
+        "question": "Pulp vitality",
+        "options": [
+            {
+                "value": "Altered",
+                "description": "There is an exaggerated or persistent painful response to vitality testing.",
+                "aliases": [
+                    "altered",
+                    "alterada", "alterado"
+                ]
+            },
+            {
+                "value": "Negative",
+                "description": "There is no response to vitality testing.",
+                "aliases": [
+                    "negative", "no response",
+                    "negativo", "sem resposta"
+                ]
+            },
+            {
+                "value": "Normal",
+                "description": "There is a mild, transient response that disappears shortly after the stimulus is removed.",
+                "aliases": [
+                    "normal"
+                ]
+            },
+        ],
+    },
+    {
+        "field": "PERCUSSION",
+        "question": "Percussion",
+        "options": [
+            {
+                "value": "Not applicable",
+                "description": "Use this when percussion testing is not applicable in the clinical situation.",
+                "aliases": [
+                    "not applicable", "n/a",
+                    "nao se aplica", "não se aplica"
+                ]
+            },
+            {
+                "value": "Normal",
+                "description": "There is no pain or sensitivity on percussion.",
+                "aliases": [
+                    "normal", "no pain", "not sensitive",
+                    "sem dor", "normal"
+                ]
+            },
+            {
+                "value": "Sensitive",
+                "description": "There is pain or sensitivity on percussion.",
+                "aliases": [
+                    "sensitive", "painful", "tender",
+                    "sensivel", "sensível", "doloroso"
+                ]
+            },
+        ],
+    },
+    {
+        "field": "PALPATION",
+        "question": "Palpation",
+        "options": [
+            {
+                "value": "Edema",
+                "description": "There is swelling of the adjacent tissues.",
+                "aliases": [
+                    "edema", "swelling", "swollen",
+                    "edema", "inchaco", "inchaço"
+                ]
+            },
+            {
+                "value": "Fistula",
+                "description": "There is a sinus tract or a mucosal/cutaneous opening communicating with the root apex.",
+                "aliases": [
+                    "fistula", "sinus tract",
+                    "fistula", "fístula", "trajeto fistuloso"
+                ]
+            },
+            {
+                "value": "Normal",
+                "description": "There is no pain on palpation.",
+                "aliases": [
+                    "normal", "no pain", "not sensitive",
+                    "normal", "sem dor"
+                ]
+            },
+            {
+                "value": "Sensitive",
+                "description": "There is pain or sensitivity on palpation.",
+                "aliases": [
+                    "sensitive", "painful", "tender",
+                    "sensivel", "sensível", "doloroso"
+                ]
+            },
+        ],
+    },
+    {
+        "field": "RADIOGRAPHY",
+        "question": "Radiographic finding",
+        "options": [
+            {
+                "value": "Circumscribed",
+                "description": "The lesion is well delimited, with relatively distinct borders.",
+                "aliases": [
+                    "circumscribed",
+                    "circunscrita"
+                ]
+            },
+            {
+                "value": "Diffuse",
+                "description": "The lesion has poorly defined borders or a gradual transition to adjacent tissues.",
+                "aliases": [
+                    "diffuse",
+                    "difusa"
+                ]
+            },
+            {
+                "value": "Thickening",
+                "description": "There is widening or thickening of the periodontal ligament space.",
+                "aliases": [
+                    "thickening", "widening",
+                    "espessamento", "alargamento"
+                ]
+            },
+            {
+                "value": "Normal",
+                "description": "The lamina dura is intact and the periodontal ligament space is uniform.",
+                "aliases": [
+                    "normal"
+                ]
+            },
+            {
+                "value": "Diffuse radiopaque",
+                "description": "There is a diffuse increase in radiopacity with ill-defined borders and gradual transition to adjacent bone.",
+                "aliases": [
+                    "diffuse radiopaque",
+                    "radiopaca difusa", "radiopaco difuso", "radiopaque diffuse"
+                ]
+            },
+        ],
+    },
+]
+
+# =========================
+# SESSIONS
+# =========================
+sessions = {}
+
+
+def create_session_if_needed(session_id: str):
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "language": None,
+            "stage": "greeting",   # greeting -> triage -> completed
+            "current_question": 0,
+            "answers": {},
+            "diagnosis_result": {}
+        }
 
 
 def get_question_by_index(index: int):
@@ -248,7 +374,7 @@ Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reas
 
 This system conducts a structured clinical screening based on signs, symptoms, and complementary examination findings. At the end of the process, a diagnostic suggestion will be presented according to the reference nomenclature adopted by the system.
 
-The variables will be presented sequentially. At each step, select the option that best represents the clinical findings of the case under evaluation.
+The variables will be presented sequentially. At each step, provide the option that best represents the clinical findings of the case under evaluation.
 
 We will begin with the first variable.
 """.strip()
@@ -256,11 +382,6 @@ We will begin with the first variable.
     intro_text = translate_text(intro_text, language)
     first_question = build_question_text(0, language)
     return f"{intro_text}\n\n{first_question}"
-
-
-def build_confirmation_text(value: str, language: str) -> str:
-    text = f"Based on your answer, may I consider **{value}**? (Type: Yes or No)"
-    return translate_text(text, language)
 
 
 def build_final_message(language: str) -> str:
@@ -278,57 +399,40 @@ def build_incomplete_message(language: str) -> str:
     return translate_text(text, language)
 
 
-def build_greeting_message(language: str) -> str:
+def build_invalid_answer_message(index: int, language: str) -> str:
     text = (
-        "Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics."
+        "I could not identify a valid option for this item. "
+        "Please answer using one of the available options."
     )
-    return translate_text(text, language)
+    text = translate_text(text, language)
+    question_text = build_question_text(index, language)
+    return f"{text}\n\n{question_text}"
 
 
-def interpret_answer_with_ai(question_index: int, user_answer: str, language: str) -> str:
+def find_matching_option(question_index: int, user_text: str):
     q = get_question_by_index(question_index)
-    options_block = "\n".join(
-        [f"- {opt['value']}: {opt['description']}" for opt in q["options"]]
-    )
+    norm_user = normalize_text(user_text)
 
-    prompt = f"""
-You are an assistant for structured endodontic screening.
+    # match exato em value
+    for opt in q["options"]:
+        if normalize_text(opt["value"]) == norm_user:
+            return opt["value"]
 
-Your task is to map the user's answer to exactly one of the allowed options below.
+    # match por aliases exatos
+    for opt in q["options"]:
+        for alias in opt.get("aliases", []):
+            if normalize_text(alias) == norm_user:
+                return opt["value"]
 
-Question:
-{q['question']}
+    # match por inclusão simples
+    for opt in q["options"]:
+        all_terms = [opt["value"]] + opt.get("aliases", [])
+        for term in all_terms:
+            norm_term = normalize_text(term)
+            if norm_term and norm_term in norm_user:
+                return opt["value"]
 
-Allowed options:
-{options_block}
-
-User language: {language}
-User answer: {user_answer}
-
-Rules:
-- Return only one option value exactly as written.
-- Do not explain.
-- Do not translate the option.
-- If the user answer is a greeting or unrelated to the clinical question, return exactly: INVALID
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a specialist in endodontic screening."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0
-        )
-        mapped = response.choices[0].message.content.strip()
-
-        allowed = {opt["value"] for opt in q["options"]}
-        if mapped in allowed:
-            return mapped
-        return "INVALID"
-    except Exception:
-        return "INVALID"
+    return None
 
 
 def find_diagnosis_row(answers: dict):
@@ -357,16 +461,6 @@ def find_diagnosis_row(answers: dict):
     return result.iloc[0]
 
 
-def wrap_pdf_lines(text: str, width: int = 90):
-    if not text:
-        return [""]
-    lines = []
-    for paragraph in str(text).split("\n"):
-        wrapped = textwrap.wrap(paragraph, width=width) or [""]
-        lines.extend(wrapped)
-    return lines
-
-
 # =========================
 # ROOT
 # =========================
@@ -385,9 +479,6 @@ async def root():
     """
 
 
-# =========================
-# HEALTH
-# =========================
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -403,7 +494,10 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
     language = session["language"] or "English"
 
     if session["stage"] == "greeting":
-        texto = build_greeting_message(language)
+        texto = translate_text(
+            "Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.",
+            language
+        )
         return {"pergunta": texto, "mensagem": texto}
 
     current_index = session["current_question"]
@@ -431,17 +525,12 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
     language = session["language"]
 
+    # entrada inicial: saudação
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
 
         intro_and_question = build_intro_and_first_question(language)
-
-        session["pending_answer"] = {
-            "type": "FLOW",
-            "action": "START_SCREENING"
-        }
-
         return {
             "campo": "__FLOW__",
             "resposta_interpretada": "START_SCREENING",
@@ -449,56 +538,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "pergunta": intro_and_question
         }
 
-    if session["pending_answer"] is not None:
-        if is_yes(user_text):
-            pending = session["pending_answer"]
-
-            if pending.get("type") == "ANSWER":
-                field = pending["field"]
-                value = pending["value"]
-
-                session["answers"][field] = value
-                session["pending_answer"] = None
-                session["current_question"] += 1
-
-                if session["current_question"] < len(questions):
-                    next_question = build_question_text(session["current_question"], language)
-                    return {
-                        "campo": "__FLOW__",
-                        "resposta_interpretada": "ASK_NEXT",
-                        "mensagem": next_question,
-                        "pergunta": next_question
-                    }
-                else:
-                    session["stage"] = "completed"
-                    final_message = build_final_message(language)
-                    return {
-                        "campo": "__FLOW__",
-                        "resposta_interpretada": "READY_FOR_DIAGNOSIS",
-                        "mensagem": final_message
-                    }
-
-            elif pending.get("type") == "FLOW":
-                session["pending_answer"] = None
-                if session["current_question"] < len(questions):
-                    next_question = build_question_text(session["current_question"], language)
-                    return {
-                        "campo": "__FLOW__",
-                        "resposta_interpretada": "ASK_NEXT",
-                        "mensagem": next_question,
-                        "pergunta": next_question
-                    }
-
-        if is_no(user_text):
-            session["pending_answer"] = None
-            current_question_text = build_question_text(session["current_question"], language)
-            return {
-                "campo": "__FLOW__",
-                "resposta_interpretada": "REASK_CURRENT",
-                "mensagem": current_question_text,
-                "pergunta": current_question_text
-            }
-
+    # se já terminou
     if session["stage"] == "completed":
         final_message = build_final_message(language)
         return {
@@ -508,6 +548,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         }
 
     current_index = session["current_question"]
+
     if current_index >= len(questions):
         session["stage"] = "completed"
         final_message = build_final_message(language)
@@ -517,37 +558,42 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "mensagem": final_message
         }
 
-    mapped_answer = interpret_answer_with_ai(current_index, user_text, language)
+    matched_option = find_matching_option(current_index, user_text)
 
-    if mapped_answer == "INVALID":
-        current_question_text = build_question_text(current_index, language)
-        invalid_text = translate_text(
-            "I could not understand your clinical answer for this item. Please choose one of the listed options.",
-            language
-        )
-        mensagem = f"{invalid_text}\n\n{current_question_text}"
+    if not matched_option:
+        invalid_message = build_invalid_answer_message(current_index, language)
         return {
             "campo": "__FLOW__",
             "resposta_interpretada": "REASK_CURRENT",
-            "mensagem": mensagem,
-            "pergunta": mensagem
+            "mensagem": invalid_message,
+            "pergunta": invalid_message
         }
 
     field = questions[current_index]["field"]
-    session["pending_answer"] = {
-        "type": "ANSWER",
-        "field": field,
-        "value": mapped_answer
-    }
+    session["answers"][field] = matched_option
+    session["current_question"] += 1
 
+    if session["current_question"] < len(questions):
+        next_question = build_question_text(session["current_question"], language)
+        return {
+            "campo": field,
+            "resposta_interpretada": matched_option,
+            "mensagem": next_question,
+            "pergunta": next_question
+        }
+
+    session["stage"] = "completed"
+    final_message = build_final_message(language)
     return {
         "campo": field,
-        "resposta_interpretada": mapped_answer
+        "resposta_interpretada": matched_option,
+        "mensagem": final_message
     }
 
 
 # =========================
 # CONFIRMAR
+# Compatibilidade com frontend antigo
 # =========================
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
@@ -557,19 +603,27 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
 
     interpreted = (resposta_interpretada or "").strip()
 
-    if interpreted in {"START_SCREENING", "ASK_NEXT", "REASK_CURRENT"}:
-        if session["stage"] == "triage" and session["current_question"] == 0 and session["pending_answer"] is not None:
+    if interpreted in {"START_SCREENING", "REASK_CURRENT"}:
+        current_index = session["current_question"]
+        if current_index == 0:
             texto = build_intro_and_first_question(language)
         else:
-            texto = build_question_text(session["current_question"], language)
+            texto = build_question_text(current_index, language)
         return {"mensagem": texto, "pergunta": texto}
 
     if interpreted == "READY_FOR_DIAGNOSIS":
         texto = build_final_message(language)
         return {"mensagem": texto}
 
-    texto_confirmacao = build_confirmation_text(interpreted, language)
-    return {"mensagem": texto_confirmacao}
+    # frontend antigo pode ainda chamar /confirmar/
+    # aqui apenas repetimos a próxima pergunta se existir
+    current_index = session["current_question"]
+    if current_index < len(questions):
+        texto = build_question_text(current_index, language)
+        return {"mensagem": texto, "pergunta": texto}
+
+    texto = build_final_message(language)
+    return {"mensagem": texto}
 
 
 # =========================
@@ -652,7 +706,7 @@ async def explicacao(
         )
 
     prompt = f"""
-Explain clearly to a newly graduated dentist the following endodontic diagnostic result.
+Explain clearly to a dentist the following endodontic diagnostic result.
 
 Write the entire answer in {language}.
 Do not switch languages.
@@ -695,7 +749,6 @@ async def reset_session(session_id: str = Form(...)):
         "stage": "greeting",
         "current_question": 0,
         "answers": {},
-        "pending_answer": None,
         "diagnosis_result": {}
     }
     return {"mensagem": "Session reset successfully."}
