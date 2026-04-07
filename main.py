@@ -23,7 +23,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY was not found in environment variables.")
 
-# Modelos configuráveis por ambiente
 MODEL_EXTRACT = os.getenv("MODEL_EXTRACT", "gpt-4o-mini")
 MODEL_TRANSLATE = os.getenv("MODEL_TRANSLATE", "gpt-4o-mini")
 MODEL_EXPLAIN = os.getenv("MODEL_EXPLAIN", "gpt-4o")
@@ -72,16 +71,6 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def wrap_pdf_lines(text: str, width: int = 90):
-    if not text:
-        return [""]
-    lines = []
-    for paragraph in str(text).split("\n"):
-        wrapped = textwrap.wrap(paragraph, width=width) or [""]
-        lines.extend(wrapped)
-    return lines
-
-
 def safe_json_loads(text: str):
     try:
         return json.loads(text)
@@ -100,16 +89,25 @@ def safe_chat_completion(messages, model, temperature=0, response_format=None):
     return client.chat.completions.create(**kwargs)
 
 
+def wrap_pdf_lines(text: str, width: int = 90):
+    if not text:
+        return [""]
+    lines = []
+    for paragraph in str(text).split("\n"):
+        wrapped = textwrap.wrap(paragraph, width=width) or [""]
+        lines.extend(wrapped)
+    return lines
+
+
 def detect_language(text: str) -> str:
     if not text or not str(text).strip():
         return "English"
 
     norm = normalize_text(text)
-
     pt_markers = [
-        "oi", "olá", "ola", "não", "nao", "sem dor", "dor",
-        "paciente", "sensivel", "sensível", "fistula", "fístula",
-        "palpação", "percussão", "radiografia", "alterada", "normal"
+        "oi", "olá", "ola", "não", "nao", "sem dor", "dor", "paciente",
+        "sensivel", "sensível", "alterada", "normal", "radiografia",
+        "percussão", "palpação", "fístula", "fistula"
     ]
     if any(marker in norm for marker in pt_markers):
         return "Portuguese"
@@ -136,7 +134,6 @@ def translate_text(text: str, target_language: str) -> str:
         return text
     if normalize_text(target_language) == "english":
         return text
-
     try:
         prompt = (
             f"Translate the following text into {target_language}. "
@@ -453,7 +450,6 @@ QUESTION_DEFS = [
 
 FIELD_TO_CODES = {q["field"]: q["codes"] for q in QUESTION_DEFS}
 FIELD_ORDER = [q["field"] for q in QUESTION_DEFS]
-FIELD_TO_QUESTION = {q["field"]: q["question"] for q in QUESTION_DEFS}
 
 # =========================
 # LOAD DATA
@@ -483,21 +479,18 @@ for required_col in REQUIRED_SPREADSHEET_COLS:
     if required_col not in df.columns:
         raise RuntimeError(f"Required column '{required_col}' not found in spreadsheet.")
 
+
 # =========================
 # CANONICALIZATION
 # =========================
 def canonicalize_value(field: str, value: str):
-    """
-    Converte texto livre em código canônico,
-    sempre considerando somente as opções do campo atual.
-    """
     norm = normalize_text(value)
     if not norm:
         return None
 
     field_codes = FIELD_TO_CODES[field]
 
-    # 1. match exato
+    # exact match
     for code in field_codes:
         meta = OPTION_CATALOG[code]
         terms = [meta["label"], meta.get("label_pt", "")] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
@@ -505,7 +498,7 @@ def canonicalize_value(field: str, value: str):
             if normalize_text(term) == norm:
                 return code
 
-    # 2. match por inclusão, priorizando termos maiores
+    # contained match, largest first
     candidates = []
     for code in field_codes:
         meta = OPTION_CATALOG[code]
@@ -520,7 +513,7 @@ def canonicalize_value(field: str, value: str):
         if nterm in norm:
             return code
 
-    # 3. heurísticas específicas
+    # heuristics
     if field == "PAIN":
         if any(term in norm for term in [
             "sem dor", "nao tem dor", "não tem dor",
@@ -529,7 +522,6 @@ def canonicalize_value(field: str, value: str):
             "paciente sem dor", "assintomatico", "assintomático"
         ]):
             return "pain_absent"
-
         if any(term in norm for term in [
             "com dor", "tem dor", "dor presente",
             "esta com dor", "está com dor",
@@ -582,15 +574,15 @@ def label_for_code(code: str, language: str = "English"):
     return meta.get("label", code)
 
 
+# canonical spreadsheet
 for field in FIELD_ORDER:
     df[f"__code_{field}"] = df[field].apply(lambda x: canonicalize_value(field, x))
 
 unmapped_rows = df[[f"__code_{field}" for field in FIELD_ORDER]].isna().any(axis=1)
 if unmapped_rows.any():
     bad_indices = df[unmapped_rows].index.tolist()
-    raise RuntimeError(
-        f"Some spreadsheet rows could not be canonicalized. Row indices: {bad_indices}"
-    )
+    raise RuntimeError(f"Some spreadsheet rows could not be canonicalized. Row indices: {bad_indices}")
+
 
 # =========================
 # SESSIONS
@@ -598,16 +590,26 @@ if unmapped_rows.any():
 sessions = {}
 
 
+def empty_session():
+    return {
+        "language": None,
+        "stage": "greeting",
+        "current_question": 0,
+        "answers": {},
+        "diagnosis_result": {},
+        "history": [],
+        "last_bot_payload": None,   # important for legacy frontend compatibility
+    }
+
+
 def create_session_if_needed(session_id: str):
     if session_id not in sessions:
-        sessions[session_id] = {
-            "language": None,
-            "stage": "greeting",   # greeting -> triage -> completed
-            "current_question": 0,
-            "answers": {},
-            "diagnosis_result": {},
-            "history": []
-        }
+        sessions[session_id] = empty_session()
+
+
+def cache_payload(session: dict, payload: dict):
+    session["last_bot_payload"] = payload
+    return payload
 
 
 def get_question_by_index(index: int):
@@ -617,7 +619,6 @@ def get_question_by_index(index: int):
 
 
 def apply_business_rules(session: dict):
-    # Se não há dor, onset não se aplica
     if session["answers"].get("PAIN") == "pain_absent":
         session["answers"]["ONSET"] = "onset_na"
 
@@ -638,18 +639,15 @@ def sync_current_question(session: dict):
 
 def build_question_text(index: int, language: str) -> str:
     q = get_question_by_index(index)
-
     is_pt = normalize_text(language) == "portuguese"
     question_line = q.get("question_pt", q["question"]) if is_pt else q["question"]
 
     base_text = f"{question_line}\n\n"
-
     for code in q["codes"]:
         meta = OPTION_CATALOG[code]
         label = meta.get("label_pt", meta["label"]) if is_pt else meta["label"]
         desc = meta.get("description_pt", meta["description"]) if is_pt else meta["description"]
         base_text += f"{label} - {desc}\n"
-
     return base_text.strip()
 
 
@@ -687,8 +685,11 @@ def build_invalid_answer_message(index: int, language: str) -> str:
         text = "Não consegui identificar essa resposta com segurança. Responda usando uma das opções mostradas."
     else:
         text = "I could not identify that response safely. Please answer using one of the listed options."
-    question_text = build_question_text(index, language)
-    return f"{text}\n\n{question_text}"
+    return f"{text}\n\n{build_question_text(index, language)}"
+
+
+def format_captured_fields(extracted: dict, language: str):
+    return {field: label_for_code(code, language) for field, code in extracted.items()}
 
 
 def summarize_recent_context(session: dict, language: str = "English", max_items: int = 6):
@@ -699,15 +700,14 @@ def summarize_recent_context(session: dict, language: str = "English", max_items
     return "; ".join(items[:max_items])
 
 
-def format_captured_fields(extracted: dict, language: str):
-    return {field: label_for_code(code, language) for field, code in extracted.items()}
-
-
+# =========================
+# EXTRACTION
+# =========================
 def extract_answers_fallback(user_text: str, session: dict):
     """
-    Regras locais seguras:
-    - por padrão, interpreta SOMENTE o campo atual
-    - só tenta múltiplos campos se a mensagem claramente trouxer múltiplos achados
+    Conservative local extraction:
+    - default: only current field
+    - only tries multi-field when clearly explicit
     """
     extracted = {}
 
@@ -718,31 +718,20 @@ def extract_answers_fallback(user_text: str, session: dict):
     current_field = QUESTION_DEFS[session["current_question"]]["field"]
     norm = normalize_text(user_text)
 
-    # 1. Prioriza o campo atual
     current_code = canonicalize_value(current_field, user_text)
     if current_code:
         extracted[current_field] = current_code
 
-    # 2. Só tenta múltiplos campos se houver indício forte
-    multi_signal = any(sep in norm for sep in [
-        ";", ",", " e ", " and ", " além disso", "também", "also"
-    ])
-
+    multi_signal = any(sep in norm for sep in [";", ",", " e ", " and ", " além disso", "também", "also"])
     explicit_field_cues = any(term in norm for term in [
-        "vitalidade", "teste de vitalidade",
-        "percuss", "palpa", "radiogra", "rx", "radiograf"
+        "vitalidade", "teste de vitalidade", "percuss", "palpa", "radiogra", "rx", "radiograf"
     ])
 
     if multi_signal or explicit_field_cues:
-        remaining_fields = [
-            field for field in FIELD_ORDER
-            if field not in session["answers"] and field != current_field
-        ]
-
+        remaining_fields = [field for field in FIELD_ORDER if field not in session["answers"] and field != current_field]
         for field in remaining_fields:
             code = canonicalize_value(field, user_text)
             if code:
-                # evita inferência cruzada com termos genéricos
                 if normalize_text(user_text) in {"sem dor", "normal", "sensivel", "sensível", "circunscrita"}:
                     continue
                 extracted[field] = code
@@ -828,14 +817,10 @@ User message:
 
         extracted = {}
         for field, payload in (data.get("answers") or {}).items():
-            if field not in remaining_fields:
+            if field not in remaining_fields or not payload:
                 continue
-            if not payload:
-                continue
-
             code = payload.get("code")
             confidence = payload.get("confidence", 0)
-
             if code in FIELD_TO_CODES[field] and isinstance(confidence, (int, float)) and confidence >= 0.80:
                 extracted[field] = code
 
@@ -851,6 +836,9 @@ def merge_extracted_answers(session: dict, extracted: dict):
     sync_current_question(session)
 
 
+# =========================
+# DIAGNOSIS ENGINE
+# =========================
 def find_diagnosis_row(answers: dict):
     temp_df = df.copy()
 
@@ -870,9 +858,7 @@ def find_diagnosis_row(answers: dict):
 
 
 def run_diagnosis_from_session(session: dict):
-    required_fields = FIELD_ORDER
-    missing_fields = [field for field in required_fields if field not in session["answers"]]
-
+    missing_fields = [field for field in FIELD_ORDER if field not in session["answers"]]
     if missing_fields:
         return {
             "ok": False,
@@ -921,8 +907,40 @@ Diagnostic result:
 - Diagnosis (AAE/ESE nomenclature 2025): {diagnosis_payload.get("diagnosis_aae_ese_2025", "")}
 - Complementary diagnosis: {diagnosis_payload.get("complementary_diagnosis", "")}
 """.strip()
-
     return translate_text(text, language)
+
+
+def build_response_after_processing(session: dict, extracted: dict, primary_field: str, primary_code: str):
+    language = session["language"] or "English"
+
+    if session["stage"] == "completed":
+        diagnosis_payload = run_diagnosis_from_session(session)
+        final_message = build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
+
+        payload = {
+            "campo": primary_field,
+            "resposta_interpretada": label_for_code(primary_code, language),
+            "mensagem": final_message,
+            "captured_fields": format_captured_fields(extracted, language)
+        }
+
+        if diagnosis_payload.get("ok"):
+            payload["diagnosis"] = diagnosis_payload
+        elif diagnosis_payload.get("type") == "not_found":
+            payload["mensagem"] += "\n\n" + build_inconsistent_message(language)
+
+        return cache_payload(session, payload)
+
+    next_index = session["current_question"]
+    next_question = build_question_text(next_index, language)
+    payload = {
+        "campo": primary_field,
+        "resposta_interpretada": label_for_code(primary_code, language),
+        "mensagem": next_question,
+        "pergunta": next_question,
+        "captured_fields": format_captured_fields(extracted, language)
+    }
+    return cache_payload(session, payload)
 
 
 # =========================
@@ -933,7 +951,6 @@ async def root():
     index_file = STATIC_DIR / "index.html"
     if index_file.exists():
         return index_file.read_text(encoding="utf-8")
-
     return """
     <html>
         <body>
@@ -964,14 +981,17 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
             "Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.",
             language
         )
-        return {"pergunta": texto, "mensagem": texto}
+        payload = {"pergunta": texto, "mensagem": texto}
+        return cache_payload(session, payload)
 
     current_index = session["current_question"]
-
     if current_index < len(QUESTION_DEFS):
-        return {"pergunta": build_question_text(current_index, language)}
+        texto = build_question_text(current_index, language)
+        payload = {"pergunta": texto, "mensagem": texto}
+        return cache_payload(session, payload)
 
-    return {"mensagem": build_final_message(language)}
+    payload = {"mensagem": build_final_message(language)}
+    return cache_payload(session, payload)
 
 
 # =========================
@@ -992,19 +1012,19 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
     if user_text:
         session["history"].append({"role": "user", "content": user_text})
 
-    # ===== PRIMEIRA INTERAÇÃO =====
+    # primeira interação
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
 
         if is_greeting(user_text):
-            intro_and_question = build_intro_and_first_question(language)
-            return {
+            payload = {
                 "campo": "__FLOW__",
                 "resposta_interpretada": "START_SCREENING",
-                "mensagem": intro_and_question,
-                "pergunta": intro_and_question
+                "mensagem": build_intro_and_first_question(language),
+                "pergunta": build_intro_and_first_question(language)
             }
+            return cache_payload(session, payload)
 
         extracted = extract_answers_fallback(user_text, session)
         if not extracted:
@@ -1012,63 +1032,34 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
         if extracted:
             merge_extracted_answers(session, extracted)
+            primary_field = list(extracted.keys())[0]
+            primary_code = extracted[primary_field]
+            return build_response_after_processing(session, extracted, primary_field, primary_code)
 
-            if session["stage"] == "completed":
-                diagnosis_payload = run_diagnosis_from_session(session)
-                final_message = build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
-
-                response = {
-                    "campo": list(extracted.keys())[0],
-                    "resposta_interpretada": label_for_code(list(extracted.values())[0], language),
-                    "mensagem": final_message,
-                    "captured_fields": format_captured_fields(extracted, language)
-                }
-
-                if diagnosis_payload.get("ok"):
-                    response["diagnosis"] = diagnosis_payload
-                elif diagnosis_payload.get("type") == "not_found":
-                    response["mensagem"] += "\n\n" + build_inconsistent_message(language)
-
-                return response
-
-            next_index = session["current_question"]
-            next_question = build_question_text(next_index, language)
-
-            return {
-                "campo": list(extracted.keys())[0],
-                "resposta_interpretada": label_for_code(list(extracted.values())[0], language),
-                "mensagem": next_question,
-                "pergunta": next_question,
-                "captured_fields": format_captured_fields(extracted, language)
-            }
-
-        intro_and_question = build_intro_and_first_question(language)
-        return {
+        payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "START_SCREENING",
-            "mensagem": intro_and_question,
-            "pergunta": intro_and_question
+            "mensagem": build_intro_and_first_question(language),
+            "pergunta": build_intro_and_first_question(language)
         }
+        return cache_payload(session, payload)
 
-    # ===== TRIAGEM =====
+    # triagem
     sync_current_question(session)
 
     if session["stage"] == "completed":
         diagnosis_payload = run_diagnosis_from_session(session)
         final_message = build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
-
-        response = {
+        payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "READY_FOR_DIAGNOSIS",
             "mensagem": final_message
         }
-
         if diagnosis_payload.get("ok"):
-            response["diagnosis"] = diagnosis_payload
+            payload["diagnosis"] = diagnosis_payload
         elif diagnosis_payload.get("type") == "not_found":
-            response["mensagem"] += "\n\n" + build_inconsistent_message(language)
-
-        return response
+            payload["mensagem"] += "\n\n" + build_inconsistent_message(language)
+        return cache_payload(session, payload)
 
     current_index = session["current_question"]
     current_field = QUESTION_DEFS[current_index]["field"]
@@ -1083,81 +1074,62 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             extracted[current_field] = direct_current
 
     if not extracted:
-        invalid_message = build_invalid_answer_message(current_index, language)
-        return {
+        payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "REASK_CURRENT",
-            "mensagem": invalid_message,
-            "pergunta": invalid_message
+            "mensagem": build_invalid_answer_message(current_index, language),
+            "pergunta": build_invalid_answer_message(current_index, language)
         }
+        return cache_payload(session, payload)
 
     merge_extracted_answers(session, extracted)
-
     primary_field = current_field if current_field in extracted else list(extracted.keys())[0]
     primary_code = extracted[primary_field]
-
-    if session["stage"] == "completed":
-        diagnosis_payload = run_diagnosis_from_session(session)
-        final_message = build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
-
-        response = {
-            "campo": primary_field,
-            "resposta_interpretada": label_for_code(primary_code, language),
-            "mensagem": final_message,
-            "captured_fields": format_captured_fields(extracted, language)
-        }
-
-        if diagnosis_payload.get("ok"):
-            response["diagnosis"] = diagnosis_payload
-        elif diagnosis_payload.get("type") == "not_found":
-            response["mensagem"] += "\n\n" + build_inconsistent_message(language)
-
-        return response
-
-    next_index = session["current_question"]
-    next_question = build_question_text(next_index, language)
-
-    return {
-        "campo": primary_field,
-        "resposta_interpretada": label_for_code(primary_code, language),
-        "mensagem": next_question,
-        "pergunta": next_question,
-        "captured_fields": format_captured_fields(extracted, language)
-    }
+    return build_response_after_processing(session, extracted, primary_field, primary_code)
 
 
 # =========================
 # CONFIRMAR
+# Legacy frontend compatibility:
+# return the last already-processed payload,
+# do not reprocess and do not roll back state.
 # =========================
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
     create_session_if_needed(session_id)
     session = sessions[session_id]
+
+    # Main fix for old frontend:
+    # if responder already processed the turn, confirm just echoes it.
+    if session.get("last_bot_payload"):
+        return session["last_bot_payload"]
+
     language = session["language"] or "English"
+    sync_current_question(session)
 
     interpreted = (resposta_interpretada or "").strip()
-    sync_current_question(session)
 
     if interpreted in {"START_SCREENING", "REASK_CURRENT"}:
         current_index = session["current_question"]
-        if current_index == 0 and session["stage"] != "completed":
-            texto = build_intro_and_first_question(language)
-        elif current_index < len(QUESTION_DEFS):
+        if current_index < len(QUESTION_DEFS):
             texto = build_question_text(current_index, language)
-        else:
-            texto = build_final_message(language)
-        return {"mensagem": texto, "pergunta": texto}
+            payload = {"mensagem": texto, "pergunta": texto}
+            return cache_payload(session, payload)
 
     if interpreted == "READY_FOR_DIAGNOSIS":
         diagnosis_payload = run_diagnosis_from_session(session)
-        return {"mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)}
+        payload = {"mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)}
+        if diagnosis_payload.get("ok"):
+            payload["diagnosis"] = diagnosis_payload
+        return cache_payload(session, payload)
 
-    current_index = session["current_question"]
-    if current_index < len(QUESTION_DEFS):
-        texto = build_question_text(current_index, language)
-        return {"mensagem": texto, "pergunta": texto}
+    if session["current_question"] < len(QUESTION_DEFS):
+        texto = build_question_text(session["current_question"], language)
+        payload = {"mensagem": texto, "pergunta": texto}
+        return cache_payload(session, payload)
 
-    return {"mensagem": build_final_message(language)}
+    payload = {"mensagem": build_final_message(language)}
+    return cache_payload(session, payload)
 
 
 # =========================
@@ -1170,7 +1142,6 @@ async def diagnostico(session_id: str = Form(...)):
     language = session["language"] or "English"
 
     sync_current_question(session)
-
     diagnosis_payload = run_diagnosis_from_session(session)
 
     if not diagnosis_payload.get("ok"):
@@ -1264,14 +1235,7 @@ Diagnostic result:
 # =========================
 @app.post("/reset/")
 async def reset_session(session_id: str = Form(...)):
-    sessions[session_id] = {
-        "language": None,
-        "stage": "greeting",
-        "current_question": 0,
-        "answers": {},
-        "diagnosis_result": {},
-        "history": []
-    }
+    sessions[session_id] = empty_session()
     return {"mensagem": "Session reset successfully."}
 
 
