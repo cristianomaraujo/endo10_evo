@@ -23,6 +23,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY was not found in environment variables.")
 
+# Modelos configuráveis por variável de ambiente
+MODEL_EXTRACT = os.getenv("MODEL_EXTRACT", "gpt-4o-mini")
+MODEL_TRANSLATE = os.getenv("MODEL_TRANSLATE", "gpt-4o-mini")
+MODEL_EXPLAIN = os.getenv("MODEL_EXPLAIN", "gpt-4o")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -84,7 +89,7 @@ def safe_json_loads(text: str):
         return None
 
 
-def safe_chat_completion(messages, model="gpt-4o-mini", temperature=0, response_format=None):
+def safe_chat_completion(messages, model, temperature=0, response_format=None):
     kwargs = {
         "model": model,
         "messages": messages,
@@ -96,31 +101,28 @@ def safe_chat_completion(messages, model="gpt-4o-mini", temperature=0, response_
 
 
 def detect_language(text: str) -> str:
-    """
-    Detecta idioma de forma robusta, com fallback simples.
-    """
     if not text or not str(text).strip():
         return "English"
 
-    # Fallback rápido para português por padrões comuns
-    quick_pt_markers = [
-        "oi", "olá", "ola", "não", "nao", "dor", "sem dor",
-        "paciente", "sensível", "sensivel", "fístula", "fistula"
-    ]
     norm = normalize_text(text)
-    if any(marker in norm for marker in quick_pt_markers):
+
+    # fallback rápido
+    pt_markers = [
+        "oi", "olá", "ola", "não", "nao", "sem dor", "dor",
+        "paciente", "sensivel", "sensível", "fistula", "fístula"
+    ]
+    if any(marker in norm for marker in pt_markers):
         return "Portuguese"
 
     try:
         prompt = (
-            "Detect the language of the text below. "
-            "Return only one language name in English, such as: "
-            "English, Portuguese, Spanish, French, Italian, German, Chinese, Arabic.\n\n"
+            "Detect the language of the following text. "
+            "Return only the language name in English, such as English, Portuguese, Spanish, French, Italian, German, Chinese, Arabic.\n\n"
             f"Text: {text}"
         )
         response = safe_chat_completion(
             messages=[{"role": "user", "content": prompt}],
-            model="gpt-4o-mini",
+            model=MODEL_TRANSLATE,
             temperature=0
         )
         language = (response.choices[0].message.content or "").strip()
@@ -130,10 +132,6 @@ def detect_language(text: str) -> str:
 
 
 def translate_text(text: str, target_language: str) -> str:
-    """
-    Traduz apenas o necessário para exibição.
-    A lógica interna sempre permanece em códigos canônicos.
-    """
     if not text:
         return text
     if normalize_text(target_language) == "english":
@@ -149,13 +147,23 @@ def translate_text(text: str, target_language: str) -> str:
         )
         response = safe_chat_completion(
             messages=[{"role": "user", "content": prompt}],
-            model="gpt-4o-mini",
+            model=MODEL_TRANSLATE,
             temperature=0
         )
         translated = (response.choices[0].message.content or "").strip()
         return translated if translated else text
     except Exception:
         return text
+
+
+def is_greeting(text: str) -> bool:
+    norm = normalize_text(text)
+    greetings = {
+        "hi", "hello", "hey", "oi", "ola", "olá", "hola", "salut",
+        "hallo", "ciao", "bom dia", "boa tarde", "boa noite",
+        "good morning", "good afternoon", "good evening"
+    }
+    return norm in greetings
 
 
 # =========================
@@ -220,7 +228,7 @@ OPTION_CATALOG = {
         "aliases": [
             "altered", "alterada", "alterado", "resposta exacerbada",
             "resposta aumentada", "resposta persistente", "dor persistente",
-            "hiper-reativo", "hiperreativo", "positive lingering response"
+            "hiperreativo", "hyperreactive", "lingering response"
         ],
         "spreadsheet_values": ["Alterad"],
     },
@@ -416,7 +424,6 @@ for col in df.columns:
     if df[col].dtype == "object":
         df[col] = df[col].fillna("").astype(str).str.strip()
 
-# Compatibilidade com nome antigo
 if "PULPT VITALITY" in df.columns and "PULP VITALITY" not in df.columns:
     df = df.rename(columns={"PULPT VITALITY": "PULP VITALITY"})
 
@@ -430,62 +437,86 @@ for required_col in REQUIRED_SPREADSHEET_COLS:
     if required_col not in df.columns:
         raise RuntimeError(f"Required column '{required_col}' not found in spreadsheet.")
 
-
 # =========================
-# CANONICALIZATION OF SPREADSHEET
+# CANONICALIZATION
 # =========================
-def build_value_to_code_map():
-    value_to_code = {}
-    for code, meta in OPTION_CATALOG.items():
-        for val in [meta["label"]] + meta.get("aliases", []) + meta.get("spreadsheet_values", []):
-            value_to_code[normalize_text(val)] = code
-    return value_to_code
-
-
-VALUE_TO_CODE = build_value_to_code_map()
-
-
 def canonicalize_value(field: str, value: str):
     """
-    Converte valores livres ou da planilha para um código canônico.
+    Converte texto livre em código canônico,
+    sempre considerando somente as opções do campo atual.
     """
     norm = normalize_text(value)
     if not norm:
         return None
 
-    direct = VALUE_TO_CODE.get(norm)
-    if direct and direct in FIELD_TO_CODES[field]:
-        return direct
+    field_codes = FIELD_TO_CODES[field]
 
-    # Busca por alias contido no texto
+    # 1. match exato
+    for code in field_codes:
+        meta = OPTION_CATALOG[code]
+        terms = [meta["label"]] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
+        for term in terms:
+            if normalize_text(term) == norm:
+                return code
+
+    # 2. match por inclusão, priorizando termos maiores
     candidates = []
-    for code in FIELD_TO_CODES[field]:
+    for code in field_codes:
         meta = OPTION_CATALOG[code]
         terms = [meta["label"]] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
         for term in terms:
             nterm = normalize_text(term)
             if nterm:
                 candidates.append((len(nterm), nterm, code))
-
-    # Termos maiores primeiro para reduzir colisões
     candidates.sort(reverse=True)
 
     for _, nterm, code in candidates:
         if nterm in norm:
             return code
 
-    # Regras específicas por campo
+    # 3. heurísticas por campo
     if field == "PAIN":
-        if any(term in norm for term in ["sem dor", "nao tem dor", "não tem dor", "assintomatico", "assintomático"]):
+        if any(term in norm for term in [
+            "sem dor", "nao tem dor", "não tem dor",
+            "esta sem dor", "está sem dor",
+            "ele esta sem dor", "ele está sem dor",
+            "paciente sem dor", "assintomatico", "assintomático"
+        ]):
             return "pain_absent"
-        if any(term in norm for term in ["com dor", "tem dor", "dor presente", "dolorido", "dolorosa", "relata dor"]):
+
+        if any(term in norm for term in [
+            "com dor", "tem dor", "dor presente",
+            "esta com dor", "está com dor",
+            "ele esta com dor", "ele está com dor",
+            "paciente com dor", "relata dor"
+        ]):
             return "pain_present"
 
     if field == "PULP VITALITY":
-        if any(term in norm for term in ["sem resposta", "nao respondeu", "não respondeu", "teste negativo"]):
+        if any(term in norm for term in [
+            "sem resposta", "nao respondeu", "não respondeu",
+            "teste negativo", "negativo", "negative"
+        ]):
             return "pulp_negative"
-        if any(term in norm for term in ["resposta persistente", "resposta exacerbada", "aumentada"]):
+        if any(term in norm for term in [
+            "resposta persistente", "resposta exacerbada",
+            "resposta aumentada", "dor persistente"
+        ]):
             return "pulp_altered"
+
+    if field == "PERCUSSION":
+        if any(term in norm for term in [
+            "dor a percussao", "dor à percussão",
+            "sensivel a percussao", "sensível à percussão"
+        ]):
+            return "percussion_sensitive"
+
+    if field == "PALPATION":
+        if any(term in norm for term in [
+            "dor a palpacao", "dor à palpação",
+            "sensivel a palpacao", "sensível à palpação"
+        ]):
+            return "palpation_sensitive"
 
     return None
 
@@ -503,11 +534,9 @@ def spreadsheet_value_for_code(code: str):
     return values[0] if values else OPTION_CATALOG.get(code, {}).get("label", "")
 
 
-# Adiciona colunas canônicas ao dataframe
 for field in FIELD_ORDER:
     df[f"__code_{field}"] = df[field].apply(lambda x: canonicalize_value(field, x))
 
-# Validação opcional para detectar valores não mapeados
 unmapped_rows = df[[f"__code_{field}" for field in FIELD_ORDER]].isna().any(axis=1)
 if unmapped_rows.any():
     bad_indices = df[unmapped_rows].index.tolist()
@@ -539,22 +568,16 @@ def get_question_by_index(index: int):
     return QUESTION_DEFS[index]
 
 
+def apply_business_rules(session: dict):
+    if session["answers"].get("PAIN") == "pain_absent":
+        session["answers"]["ONSET"] = "onset_na"
+
+
 def get_next_unanswered_index(session: dict):
-    """
-    Retorna o próximo índice não respondido.
-    """
     for idx, q in enumerate(QUESTION_DEFS):
         if q["field"] not in session["answers"]:
             return idx
     return len(QUESTION_DEFS)
-
-
-def apply_business_rules(session: dict):
-    """
-    Regras clínicas/operacionais determinísticas.
-    """
-    if session["answers"].get("PAIN") == "pain_absent":
-        session["answers"]["ONSET"] = "onset_na"
 
 
 def sync_current_question(session: dict):
@@ -573,20 +596,19 @@ def build_question_text(index: int, language: str) -> str:
     return translate_text(base_text.strip(), language)
 
 
-def build_intro_and_first_question(language: str) -> str:
+def build_intro(language: str) -> str:
     intro_text = """
 Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.
 
 This system conducts a structured clinical screening based on signs, symptoms, and complementary examination findings. At the end of the process, a diagnostic suggestion will be presented according to the reference nomenclature adopted by the system.
 
 You may answer briefly or in natural language. If your message contains more than one clinical finding, I will try to identify them automatically.
-
-We will begin with the first variable.
 """.strip()
+    return translate_text(intro_text, language)
 
-    intro_text = translate_text(intro_text, language)
-    first_question = build_question_text(0, language)
-    return f"{intro_text}\n\n{first_question}"
+
+def build_intro_and_first_question(language: str) -> str:
+    return f"{build_intro(language)}\n\n{build_question_text(0, language)}"
 
 
 def build_final_message(language: str) -> str:
@@ -624,13 +646,45 @@ def summarize_recent_context(session: dict, max_items: int = 6):
     return "; ".join(items[:max_items])
 
 
+def extract_answers_fallback(user_text: str, session: dict):
+    """
+    Regras locais primeiro.
+    Prioriza o campo atual e depois tenta outros campos.
+    """
+    extracted = {}
+
+    sync_current_question(session)
+    if session["stage"] == "completed":
+        return extracted
+
+    current_field = QUESTION_DEFS[session["current_question"]]["field"]
+
+    current_code = canonicalize_value(current_field, user_text)
+    if current_code:
+        extracted[current_field] = current_code
+
+    remaining_fields = [
+        field for field in FIELD_ORDER
+        if field not in session["answers"] and field != current_field
+    ]
+
+    for field in remaining_fields:
+        code = canonicalize_value(field, user_text)
+        if code:
+            extracted[field] = code
+
+    if extracted.get("PAIN") == "pain_absent":
+        extracted["ONSET"] = "onset_na"
+
+    return extracted
+
+
 def extract_answers_with_llm(user_text: str, session: dict):
     """
-    Usa a API para extrair múltiplos campos da mensagem do usuário.
-    A decisão final continua estruturada em códigos canônicos.
+    Usa a API somente como apoio para capturar múltiplos achados.
+    A decisão diagnóstica segue estruturada.
     """
     remaining_fields = [field for field in FIELD_ORDER if field not in session["answers"]]
-
     if not remaining_fields:
         return {}
 
@@ -643,7 +697,7 @@ def extract_answers_with_llm(user_text: str, session: dict):
                 "code": code,
                 "label": meta["label"],
                 "description": meta["description"],
-                "aliases": meta["aliases"][:12],  # reduz prompt
+                "aliases": meta["aliases"][:12]
             })
 
     clinical_context = summarize_recent_context(session)
@@ -651,24 +705,28 @@ def extract_answers_with_llm(user_text: str, session: dict):
     prompt = f"""
 You are extracting structured endodontic triage information from a clinician's message.
 
-Return ONLY a valid JSON object with this structure:
+Return ONLY a valid JSON object with this exact structure:
 {{
   "answers": {{
-    "PAIN": {{"code": "...", "evidence": "...", "confidence": 0.0}},
-    "ONSET": {{"code": "...", "evidence": "...", "confidence": 0.0}},
-    "PULP VITALITY": {{"code": "...", "evidence": "...", "confidence": 0.0}},
-    "PERCUSSION": {{"code": "...", "evidence": "...", "confidence": 0.0}},
-    "PALPATION": {{"code": "...", "evidence": "...", "confidence": 0.0}},
-    "RADIOGRAPHY": {{"code": "...", "evidence": "...", "confidence": 0.0}}
+    "PAIN": null,
+    "ONSET": null,
+    "PULP VITALITY": null,
+    "PERCUSSION": null,
+    "PALPATION": null,
+    "RADIOGRAPHY": null
   }}
 }}
 
+When a field is identified, use this structure:
+{{"code": "...", "evidence": "...", "confidence": 0.0}}
+
 Rules:
-- Only fill fields that are explicitly or strongly implied in the message.
+- Only fill fields that are explicit or strongly implied.
 - Use null for fields not supported by the message.
 - Never invent findings.
-- Respect the allowed codes for each field.
-- If pain is clearly absent, ONSET may be set to "onset_na".
+- Use only allowed codes.
+- For PAIN, expressions such as "sem dor", "está sem dor", "assintomático", "no pain", "without pain" strongly indicate pain_absent.
+- If pain is clearly absent, ONSET may be set to onset_na.
 - Confidence must be between 0 and 1.
 
 Already known clinical context:
@@ -687,46 +745,29 @@ User message:
                 {"role": "system", "content": "You extract structured clinical data and return only JSON."},
                 {"role": "user", "content": prompt}
             ],
-            model="gpt-4o-mini",
+            model=MODEL_EXTRACT,
             temperature=0,
             response_format={"type": "json_object"}
         )
         raw = response.choices[0].message.content or "{}"
         data = safe_json_loads(raw) or {}
-        extracted = {}
 
+        extracted = {}
         for field, payload in (data.get("answers") or {}).items():
             if field not in remaining_fields:
                 continue
             if not payload:
                 continue
+
             code = payload.get("code")
             confidence = payload.get("confidence", 0)
+
             if code in FIELD_TO_CODES[field] and isinstance(confidence, (int, float)) and confidence >= 0.60:
                 extracted[field] = code
 
         return extracted
     except Exception:
         return {}
-
-
-def extract_answers_fallback(user_text: str, session: dict):
-    """
-    Fallback local por alias, inclusive tentando identificar mais de um campo na mesma mensagem.
-    """
-    extracted = {}
-    remaining_fields = [field for field in FIELD_ORDER if field not in session["answers"]]
-
-    for field in remaining_fields:
-        code = canonicalize_value(field, user_text)
-        if code:
-            extracted[field] = code
-
-    # Regra segura: se sem dor, onset = N/A
-    if extracted.get("PAIN") == "pain_absent":
-        extracted["ONSET"] = "onset_na"
-
-    return extracted
 
 
 def merge_extracted_answers(session: dict, extracted: dict):
@@ -737,9 +778,6 @@ def merge_extracted_answers(session: dict, extracted: dict):
 
 
 def find_diagnosis_row(answers: dict):
-    """
-    Busca a linha na planilha com base nos códigos canônicos, e não no texto literal.
-    """
     temp_df = df.copy()
 
     conditions = (
@@ -755,6 +793,10 @@ def find_diagnosis_row(answers: dict):
     if result.empty:
         return None
     return result.iloc[0]
+
+
+def format_captured_fields(extracted: dict):
+    return {field: label_for_code(code) for field, code in extracted.items()}
 
 
 # =========================
@@ -824,10 +866,51 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
     if user_text:
         session["history"].append({"role": "user", "content": user_text})
 
-    # Entrada inicial: saudação
+    # -------- GREETING / FIRST TURN --------
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
+
+        # Se for apenas saudação, mostra introdução + primeira pergunta
+        if is_greeting(user_text):
+            intro_and_question = build_intro_and_first_question(language)
+            return {
+                "campo": "__FLOW__",
+                "resposta_interpretada": "START_SCREENING",
+                "mensagem": intro_and_question,
+                "pergunta": intro_and_question
+            }
+
+        # Caso contrário, tenta aproveitar a própria primeira mensagem como dado clínico
+        extracted = extract_answers_fallback(user_text, session)
+        if not extracted:
+            extracted = extract_answers_with_llm(user_text, session)
+
+        if extracted:
+            merge_extracted_answers(session, extracted)
+            primary_field = list(extracted.keys())[0]
+            primary_code = extracted[primary_field]
+
+            if session["stage"] == "completed":
+                final_message = build_final_message(language)
+                return {
+                    "campo": primary_field,
+                    "resposta_interpretada": label_for_code(primary_code),
+                    "mensagem": final_message,
+                    "captured_fields": format_captured_fields(extracted)
+                }
+
+            next_index = session["current_question"]
+            next_question = build_question_text(next_index, language)
+            return {
+                "campo": primary_field,
+                "resposta_interpretada": label_for_code(primary_code),
+                "mensagem": next_question,
+                "pergunta": next_question,
+                "captured_fields": format_captured_fields(extracted)
+            }
+
+        # se não foi saudação nem achado clínico claro, mostra intro + primeira pergunta
         intro_and_question = build_intro_and_first_question(language)
         return {
             "campo": "__FLOW__",
@@ -836,9 +919,9 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "pergunta": intro_and_question
         }
 
+    # -------- TRIAGE --------
     sync_current_question(session)
 
-    # Se já terminou
     if session["stage"] == "completed":
         final_message = build_final_message(language)
         return {
@@ -850,14 +933,12 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
     current_index = session["current_question"]
     current_field = QUESTION_DEFS[current_index]["field"]
 
-    # 1) tenta extrair vários campos com LLM
-    extracted = extract_answers_with_llm(user_text, session)
+    # prioridade: regra local -> LLM -> garantia no campo atual
+    extracted = extract_answers_fallback(user_text, session)
 
-    # 2) fallback local se necessário
     if not extracted:
-        extracted = extract_answers_fallback(user_text, session)
+        extracted = extract_answers_with_llm(user_text, session)
 
-    # 3) se ainda não capturou nada, tenta ao menos o campo atual
     if current_field not in extracted:
         direct_current = canonicalize_value(current_field, user_text)
         if direct_current:
@@ -872,11 +953,8 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "pergunta": invalid_message
         }
 
-    # Aplica respostas extraídas
     merge_extracted_answers(session, extracted)
 
-    # Campo principal interpretado = o campo atual, se foi preenchido;
-    # senão, usa o primeiro campo capturado
     primary_field = current_field if current_field in extracted else list(extracted.keys())[0]
     primary_code = extracted[primary_field]
 
@@ -886,9 +964,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             "campo": primary_field,
             "resposta_interpretada": label_for_code(primary_code),
             "mensagem": final_message,
-            "captured_fields": {
-                field: label_for_code(code) for field, code in extracted.items()
-            }
+            "captured_fields": format_captured_fields(extracted)
         }
 
     next_index = session["current_question"]
@@ -899,15 +975,12 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         "resposta_interpretada": label_for_code(primary_code),
         "mensagem": next_question,
         "pergunta": next_question,
-        "captured_fields": {
-            field: label_for_code(code) for field, code in extracted.items()
-        }
+        "captured_fields": format_captured_fields(extracted)
     }
 
 
 # =========================
 # CONFIRMAR
-# Compatibilidade com frontend antigo
 # =========================
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
@@ -1043,7 +1116,7 @@ Diagnostic result:
                 {"role": "system", "content": "You are an endodontics professor."},
                 {"role": "user", "content": prompt}
             ],
-            model="gpt-4o",
+            model=MODEL_EXPLAIN,
             temperature=0.2
         )
         explanation_text = (response.choices[0].message.content or "").strip()
