@@ -17,7 +17,7 @@ app = FastAPI()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-EXCEL_FILE = "dataset_Abr2026.xlsx"
+EXCEL_FILE = "planilha_endo10.xlsx"
 SHEET_NAME = "En"
 
 # =========================
