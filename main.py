@@ -24,7 +24,7 @@ if not OPENAI_API_KEY:
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 BASE_DIR = Path(__file__).resolve().parent
-EXCEL_FILE = BASE_DIR / "dataset_Abr2026.xlsx"
+EXCEL_FILE = BASE_DIR / "planilha_endo10.xlsx"
 SHEET_NAME = "En"
 
 if not EXCEL_FILE.exists():
