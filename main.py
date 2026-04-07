@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,90 +14,82 @@ app = FastAPI()
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # ajuste em produção se necessário
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Montar a pasta static
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Pasta static
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Instancia o cliente OpenAI com a API KEY
+# Cliente OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Carrega planilha
-df = pd.read_excel("planilha_endo10.xlsx", sheet_name="Pt")
+# =========================
+# FUNÇÕES AUXILIARES
+# =========================
+def clean_text(value):
+    if pd.isna(value):
+        return ""
+    return str(value).strip().replace("\n", " ").replace("\r", " ")
 
-# Perguntas da triagem
-perguntas = [
-    {"campo": "DOR", "pergunta": "O paciente apresenta dor?", "opcoes": ["Ausente", "Presente"]},
-    {"campo": "APARECIMENTO", "pergunta": "Como a dor aparece?", "opcoes": ["Não se aplica", "Espontânea", "Provocada"]},
-    {"campo": "VITALIDADE PULPAR", "pergunta": "Qual é a condição da vitalidade pulpar do dente?", "opcoes": ["Normal", "Alterado", "Negativo"]},
-    {"campo": "PERCUSSÃO", "pergunta": "O dente é sensível à percussão?", "opcoes": ["Não se aplica", "Sensível", "Normal"]},
-    {"campo": "PALPAÇÃO", "pergunta": "Durante a palpação, o que foi observado no dente?", "opcoes": ["Sensível", "Edema", "Fístula", "Normal"]},
-    {"campo": "RADIOGRAFIA", "pergunta": "O que a radiografia mostra?", "opcoes": ["Normal", "Espessamento", "Difusa", "Circunscrita", "Radiopaca difusa"]}
-]
+def normalize_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
+    dataframe = dataframe.copy()
+    dataframe.columns = [clean_text(col) for col in dataframe.columns]
 
-sessions = {}
+    for col in dataframe.columns:
+        if dataframe[col].dtype == "object":
+            dataframe[col] = dataframe[col].apply(clean_text)
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    with open("static/index.html", "r", encoding="utf-8") as f:
-        return f.read()
+    return dataframe
 
-@app.post("/perguntar/")
-async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
-    if indice < len(perguntas):
-        pergunta_info = perguntas[indice]
-        idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
+def get_existing_column(dataframe: pd.DataFrame, possible_names):
+    for name in possible_names:
+        if name in dataframe.columns:
+            return name
+    raise KeyError(f"None of these columns were found in the spreadsheet: {possible_names}")
 
-        pergunta_traduzida = pergunta_info["pergunta"]
-        if idioma_usuario.lower() != "portuguese":
-            prompt = f"Translate the following text into {idioma_usuario}: {pergunta_info['pergunta']}"
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            pergunta_traduzida = response.choices[0].message.content.strip()
+def translate_text(text: str, target_language: str) -> str:
+    if not text:
+        return text
 
-        return {"pergunta": pergunta_traduzida}
-    else:
-        mensagem_final = "Triagem finalizada. Vamos calcular seu diagnóstico."
-        idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
+    if target_language.lower() == "portuguese":
+        return text
 
-        if idioma_usuario.lower() != "portuguese":
-            prompt_final = f"Translate the following text into {idioma_usuario}: {mensagem_final}"
-            response_final = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_final}]
-            )
-            mensagem_final = response_final.choices[0].message.content.strip()
+    prompt = f"Translate the following text into {target_language}. Keep the meaning exact:\n\n{text}"
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
 
-        return {"mensagem": mensagem_final}
+def detect_language(text: str) -> str:
+    prompt = (
+        f"Detect the language of this text: {text}. "
+        f"Only output the language name in English, such as: English, Portuguese, Spanish, Italian."
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
 
-@app.post("/responder/")
-async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
-    if session_id not in sessions:
-        prompt_detect = f"Detect the language of this text: {resposta_usuario}. Only output the language name in English, like: English, Spanish, Portuguese, Italian."
-        response_detect = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_detect}]
-        )
-        detected_language = response_detect.choices[0].message.content.strip()
-        sessions[session_id] = {"language": detected_language}
-
-    pergunta_info = perguntas[indice]
+def safe_match_option(question_text: str, options: list, user_answer: str) -> str:
     prompt = f"""
 You are an endodontic assistant.
 
-Interpret the user's answer and map it to one of the possible options.
+Interpret the user's answer and map it to exactly one of the possible options below.
 
-Question: {pergunta_info['pergunta']}
-Possible options: {', '.join(pergunta_info['opcoes'])}
-User's answer: {resposta_usuario}
+Question: {question_text}
+Possible options: {', '.join(options)}
+User's answer: {user_answer}
 
-Respond only with the most appropriate option from the list.
+Rules:
+- Return only one exact option from the list.
+- Do not explain.
+- Do not create new options.
 """
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -106,93 +98,246 @@ Respond only with the most appropriate option from the list.
             {"role": "user", "content": prompt}
         ]
     )
-    resposta_interpretada = response.choices[0].message.content.strip()
+    interpreted = response.choices[0].message.content.strip()
 
-    return {
-        "campo": pergunta_info["campo"],
-        "resposta_interpretada": resposta_interpretada
+    if interpreted not in options:
+        raise ValueError(
+            f"The interpreted answer '{interpreted}' is not one of the allowed options: {options}"
+        )
+
+    return interpreted
+
+# =========================
+# CARREGAMENTO DA PLANILHA
+# =========================
+try:
+    df = pd.read_excel("dataset_Abr2026.xlsx", sheet_name="En")
+    df = normalize_dataframe(df)
+except Exception as e:
+    raise RuntimeError(f"Error loading spreadsheet: {e}")
+
+# Mapeamento robusto de colunas
+COL_PAIN = get_existing_column(df, ["PAIN"])
+COL_ONSET = get_existing_column(df, ["ONSET"])
+COL_PULP_VITALITY = get_existing_column(df, ["PULP VITALITY", "PULPT VITALITY"])
+COL_PERCUSSION = get_existing_column(df, ["PERCUSSION"])
+COL_PALPATION = get_existing_column(df, ["PALPATION"])
+COL_RADIOGRAPHY = get_existing_column(df, ["RADIOGRAPHY"])
+
+COL_DIAG_2009 = get_existing_column(df, ["DIAGNOSIS (AAE NOMENCLATURE 2009/2013)"])
+COL_DIAG_2025 = get_existing_column(df, ["DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)"])
+COL_COMP_DIAG = get_existing_column(df, ["COMPLEMENTARY DIAGNOSIS"])
+
+# Perguntas da triagem
+questions = [
+    {
+        "field": COL_PAIN,
+        "question": "Does the patient have pain?",
+        "options": ["Absent", "Present"]
+    },
+    {
+        "field": COL_ONSET,
+        "question": "How does the pain start?",
+        "options": ["Not applicable", "Spontaneous", "Provoked"]
+    },
+    {
+        "field": COL_PULP_VITALITY,
+        "question": "What is the pulp vitality condition of the tooth?",
+        "options": ["Normal", "Altered", "Alterad", "Negative"]
+    },
+    {
+        "field": COL_PERCUSSION,
+        "question": "Is the tooth sensitive to percussion?",
+        "options": ["Not applicable", "Sensitive", "Normal"]
+    },
+    {
+        "field": COL_PALPATION,
+        "question": "What was observed on palpation?",
+        "options": ["Sensitive", "Sensivel", "Edema", "Fistula", "Normal"]
+    },
+    {
+        "field": COL_RADIOGRAPHY,
+        "question": "What does the radiograph show?",
+        "options": [
+            "Normal",
+            "Thickening",
+            "Thickening of the periodontal ligament",
+            "Diffuse",
+            "Diffuse apical radiolucency",
+            "Circumscribed",
+            "Circumscribed radiolucency lesion",
+            "Diffuse radiopaque lesion",
+            "Radiopaque diffuse"
+        ]
     }
+]
 
-@app.post("/confirmar/")
-async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
-    pergunta_info = perguntas[indice]
-    idioma_usuario = sessions.get(session_id, {}).get("language", "Portuguese")
+sessions = {}
+
+# =========================
+# ROTAS
+# =========================
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    if not os.path.exists("static/index.html"):
+        return HTMLResponse("<h1>API is running</h1>")
+    with open("static/index.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.post("/ask/")
+async def ask(index: int = Form(...), session_id: str = Form(...)):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
+
+    language = sessions.get(session_id, {}).get("language", "English")
+
+    if index < len(questions):
+        question_info = questions[index]
+        question_text = question_info["question"]
+
+        if language.lower() != "english":
+            question_text = translate_text(question_text, language)
+
+        return {"question": question_text}
+    else:
+        final_message = "Screening completed. Let's calculate the diagnosis."
+        if language.lower() != "english":
+            final_message = translate_text(final_message, language)
+        return {"message": final_message}
+
+@app.post("/answer/")
+async def answer(index: int = Form(...), user_answer: str = Form(...), session_id: str = Form(...)):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
+
+    if index < 0 or index >= len(questions):
+        raise HTTPException(status_code=400, detail="Invalid question index.")
 
     if session_id not in sessions:
-        sessions[session_id] = {}
+        detected_language = detect_language(user_answer)
+        sessions[session_id] = {"language": detected_language}
 
-    sessions[session_id][pergunta_info["campo"]] = resposta_interpretada
+    question_info = questions[index]
 
-    texto_confirmacao = f"Baseado na sua resposta, posso considerar **{resposta_interpretada}**? (Digite: Sim ou Não)"
-    if idioma_usuario.lower() != "portuguese":
-        prompt_conf = f"Translate the following text into {idioma_usuario}: {texto_confirmacao}"
-        response_conf = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_conf}]
+    try:
+        interpreted_answer = safe_match_option(
+            question_text=question_info["question"],
+            options=question_info["options"],
+            user_answer=user_answer
         )
-        texto_confirmacao = response_conf.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interpreting answer: {e}")
 
-    return {"mensagem": texto_confirmacao}
+    return {
+        "field": question_info["field"],
+        "interpreted_answer": interpreted_answer
+    }
 
-@app.post("/diagnostico/")
-async def diagnostico(session_id: str = Form(...)):
-    respostas = sessions.get(session_id, {})
-    idioma_usuario = respostas.get("language", "Portuguese")
+@app.post("/confirm/")
+async def confirm(index: int = Form(...), interpreted_answer: str = Form(...), session_id: str = Form(...)):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
 
-    filtro = (
-        (df["DOR"] == respostas.get("DOR")) &
-        (df["APARECIMENTO"] == respostas.get("APARECIMENTO")) &
-        (df["VITALIDADE PULPAR"] == respostas.get("VITALIDADE PULPAR")) &
-        (df["PERCUSSÃO"] == respostas.get("PERCUSSÃO")) &
-        (df["PALPAÇÃO"] == respostas.get("PALPAÇÃO")) &
-        (df["RADIOGRAFIA"] == respostas.get("RADIOGRAFIA"))
-    )
-    resultado = df[filtro]
+    if index < 0 or index >= len(questions):
+        raise HTTPException(status_code=400, detail="Invalid question index.")
 
-    if not resultado.empty:
-        diagnostico = resultado.iloc[0]["DIAGNÓSTICO"]
-        diagnostico_complementar = resultado.iloc[0]["DIAGNÓSTICO COMPLEMENTAR"]
+    question_info = questions[index]
+    language = sessions.get(session_id, {}).get("language", "English")
 
-        if idioma_usuario.lower() != "portuguese":
-            prompt_diag = f"Translate into {idioma_usuario}: Diagnóstico: {diagnostico}"
-            prompt_compl = f"Translate into {idioma_usuario}: Diagnóstico Complementar: {diagnostico_complementar}"
-            response_diag = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_diag}]
-            )
-            response_compl = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_compl}]
-            )
-            diagnostico = response_diag.choices[0].message.content.strip()
-            diagnostico_complementar = response_compl.choices[0].message.content.strip()
+    if session_id not in sessions:
+        sessions[session_id] = {"language": "English"}
+
+    sessions[session_id][question_info["field"]] = clean_text(interpreted_answer)
+
+    confirmation_text = f"Based on your answer, may I record **{interpreted_answer}**? (Type: Yes or No)"
+    if language.lower() != "english":
+        confirmation_text = translate_text(confirmation_text, language)
+
+    return {"message": confirmation_text}
+
+@app.post("/diagnosis/")
+async def diagnosis(session_id: str = Form(...)):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
+
+    answers = sessions.get(session_id, {})
+    language = answers.get("language", "English")
+
+    pain = clean_text(answers.get(COL_PAIN, ""))
+    onset = clean_text(answers.get(COL_ONSET, ""))
+    pulp_vitality = clean_text(answers.get(COL_PULP_VITALITY, ""))
+    percussion = clean_text(answers.get(COL_PERCUSSION, ""))
+    palpation = clean_text(answers.get(COL_PALPATION, ""))
+    radiography = clean_text(answers.get(COL_RADIOGRAPHY, ""))
+
+    result = df[
+        (df[COL_PAIN] == pain) &
+        (df[COL_ONSET] == onset) &
+        (df[COL_PULP_VITALITY] == pulp_vitality) &
+        (df[COL_PERCUSSION] == percussion) &
+        (df[COL_PALPATION] == palpation) &
+        (df[COL_RADIOGRAPHY] == radiography)
+    ]
+
+    if result.empty:
+        error_message = "I could not find a diagnosis with the provided information."
+        if language.lower() != "english":
+            error_message = translate_text(error_message, language)
+        return {"message": error_message}
+
+    diagnosis_aae_2009_2013 = clean_text(result.iloc[0][COL_DIAG_2009])
+    diagnosis_aae_ese_2025 = clean_text(result.iloc[0][COL_DIAG_2025])
+    complementary_diagnosis = clean_text(result.iloc[0][COL_COMP_DIAG])
+
+    # Salvar na sessão para PDF e outros usos
+    sessions[session_id][COL_DIAG_2009] = diagnosis_aae_2009_2013
+    sessions[session_id][COL_DIAG_2025] = diagnosis_aae_ese_2025
+    sessions[session_id][COL_COMP_DIAG] = complementary_diagnosis
+
+    if language.lower() != "english":
+        label_2009 = translate_text("Diagnosis (AAE nomenclature 2009/2013)", language)
+        label_2025 = translate_text("Diagnosis (AAE/ESE nomenclature 2025)", language)
+        label_comp = translate_text("Complementary diagnosis", language)
+
+        value_2009 = translate_text(diagnosis_aae_2009_2013, language)
+        value_2025 = translate_text(diagnosis_aae_ese_2025, language)
+        value_comp = translate_text(complementary_diagnosis, language)
 
         return {
-            "diagnostico": diagnostico,
-            "diagnostico_complementar": diagnostico_complementar
+            "diagnosis_aae_2009_2013_label": label_2009,
+            "diagnosis_aae_2009_2013": value_2009,
+            "diagnosis_aae_ese_2025_label": label_2025,
+            "diagnosis_aae_ese_2025": value_2025,
+            "complementary_diagnosis_label": label_comp,
+            "complementary_diagnosis": value_comp
         }
-    else:
-        mensagem_erro = "Não consegui encontrar um diagnóstico com essas informações."
-        if idioma_usuario.lower() != "portuguese":
-            prompt_erro = f"Translate into {idioma_usuario}: {mensagem_erro}"
-            response_erro = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt_erro}]
-            )
-            mensagem_erro = response_erro.choices[0].message.content.strip()
-        return {"mensagem": mensagem_erro}
 
-@app.post("/explicacao/")
-async def explicacao(diagnostico: str = Form(...), diagnostico_complementar: str = Form(...), session_id: str = Form(...)):
-    respostas = sessions.get(session_id, {})
-    idioma_usuario = respostas.get("language", "Portuguese")
+    return {
+        "diagnosis_aae_2009_2013": diagnosis_aae_2009_2013,
+        "diagnosis_aae_ese_2025": diagnosis_aae_ese_2025,
+        "complementary_diagnosis": complementary_diagnosis
+    }
+
+@app.post("/explanation/")
+async def explanation(
+    diagnosis_aae_2009_2013: str = Form(...),
+    diagnosis_aae_ese_2025: str = Form(...),
+    complementary_diagnosis: str = Form(...),
+    session_id: str = Form(...)
+):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
+
+    language = sessions.get(session_id, {}).get("language", "English")
 
     prompt = f"""
-Explain clearly to a newly graduated dentist the following diagnosis:
-- Main Diagnosis: {diagnostico}
-- Complementary Diagnosis: {diagnostico_complementar}
+Explain clearly to a newly graduated dentist the following diagnostic result:
 
-The explanation should be clear, without overly technical terms, and present the clinical reasoning behind the diagnosis.
+- Diagnosis according to AAE nomenclature 2009/2013: {diagnosis_aae_2009_2013}
+- Diagnosis according to AAE/ESE nomenclature 2025: {diagnosis_aae_ese_2025}
+- Complementary diagnosis: {complementary_diagnosis}
+
+The explanation should be clear, without overly technical terms, and should present the clinical reasoning behind the diagnosis.
 """
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -201,34 +346,69 @@ The explanation should be clear, without overly technical terms, and present the
             {"role": "user", "content": prompt}
         ]
     )
-    explicacao = response.choices[0].message.content.strip()
+    explanation_text = response.choices[0].message.content.strip()
 
-    if idioma_usuario.lower() != "portuguese":
-        prompt_expl = f"Translate into {idioma_usuario}: {explicacao}"
-        response_expl = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt_expl}]
-        )
-        explicacao = response_expl.choices[0].message.content.strip()
+    if language.lower() != "english":
+        explanation_text = translate_text(explanation_text, language)
 
-    return JSONResponse(content={"explicacao": explicacao})
+    return JSONResponse(content={"explanation": explanation_text})
 
 @app.get("/pdf/{session_id}")
-async def gerar_pdf(session_id: str):
-    respostas = sessions.get(session_id, {})
+async def generate_pdf(session_id: str):
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required.")
+
+    answers = sessions.get(session_id, {})
+    if not answers:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     p.setFont("Helvetica", 12)
 
     y = 750
-    p.drawString(100, y, "Relatório da Triagem Endodôntica - Endo10 EVO")
-    y -= 40
+    p.drawString(50, y, "Endodontic Screening Report")
+    y -= 30
 
-    for campo, resposta in respostas.items():
-        p.drawString(100, y, f"{campo}: {resposta}")
-        y -= 20
+    ordered_fields = [
+        COL_PAIN,
+        COL_ONSET,
+        COL_PULP_VITALITY,
+        COL_PERCUSSION,
+        COL_PALPATION,
+        COL_RADIOGRAPHY,
+        COL_DIAG_2009,
+        COL_DIAG_2025,
+        COL_COMP_DIAG
+    ]
+
+    for field in ordered_fields:
+        value = clean_text(answers.get(field, ""))
+        if value:
+            line = f"{field}: {value}"
+
+            if len(line) > 100:
+                chunks = [line[i:i+100] for i in range(0, len(line), 100)]
+                for chunk in chunks:
+                    p.drawString(50, y, chunk)
+                    y -= 18
+                    if y < 50:
+                        p.showPage()
+                        p.setFont("Helvetica", 12)
+                        y = 750
+            else:
+                p.drawString(50, y, line)
+                y -= 18
+                if y < 50:
+                    p.showPage()
+                    p.setFont("Helvetica", 12)
+                    y = 750
 
     p.save()
     buffer.seek(0)
 
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": "attachment;filename=relatorio_triagem_endo10evo.pdf"})
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=endodontic_screening_report.pdf"}
+    )
