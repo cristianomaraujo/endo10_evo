@@ -490,7 +490,6 @@ def canonicalize_value(field: str, value: str):
 
     field_codes = FIELD_TO_CODES[field]
 
-    # exact match
     for code in field_codes:
         meta = OPTION_CATALOG[code]
         terms = [meta["label"], meta.get("label_pt", "")] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
@@ -498,7 +497,6 @@ def canonicalize_value(field: str, value: str):
             if normalize_text(term) == norm:
                 return code
 
-    # contained match, largest first
     candidates = []
     for code in field_codes:
         meta = OPTION_CATALOG[code]
@@ -513,7 +511,6 @@ def canonicalize_value(field: str, value: str):
         if nterm in norm:
             return code
 
-    # heuristics
     if field == "PAIN":
         if any(term in norm for term in [
             "sem dor", "nao tem dor", "não tem dor",
@@ -574,7 +571,6 @@ def label_for_code(code: str, language: str = "English"):
     return meta.get("label", code)
 
 
-# canonical spreadsheet
 for field in FIELD_ORDER:
     df[f"__code_{field}"] = df[field].apply(lambda x: canonicalize_value(field, x))
 
@@ -598,7 +594,7 @@ def empty_session():
         "answers": {},
         "diagnosis_result": {},
         "history": [],
-        "last_bot_payload": None,   # important for legacy frontend compatibility
+        "last_bot_payload": None,
     }
 
 
@@ -704,11 +700,6 @@ def summarize_recent_context(session: dict, language: str = "English", max_items
 # EXTRACTION
 # =========================
 def extract_answers_fallback(user_text: str, session: dict):
-    """
-    Conservative local extraction:
-    - default: only current field
-    - only tries multi-field when clearly explicit
-    """
     extracted = {}
 
     sync_current_question(session)
@@ -1012,17 +1003,17 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
     if user_text:
         session["history"].append({"role": "user", "content": user_text})
 
-    # primeira interação
     if session["stage"] == "greeting":
         session["stage"] = "triage"
         session["current_question"] = 0
 
         if is_greeting(user_text):
+            intro_first = build_intro_and_first_question(language)
             payload = {
                 "campo": "__FLOW__",
                 "resposta_interpretada": "START_SCREENING",
-                "mensagem": build_intro_and_first_question(language),
-                "pergunta": build_intro_and_first_question(language)
+                "mensagem": intro_first,
+                "pergunta": intro_first
             }
             return cache_payload(session, payload)
 
@@ -1036,15 +1027,15 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             primary_code = extracted[primary_field]
             return build_response_after_processing(session, extracted, primary_field, primary_code)
 
+        intro_first = build_intro_and_first_question(language)
         payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "START_SCREENING",
-            "mensagem": build_intro_and_first_question(language),
-            "pergunta": build_intro_and_first_question(language)
+            "mensagem": intro_first,
+            "pergunta": intro_first
         }
         return cache_payload(session, payload)
 
-    # triagem
     sync_current_question(session)
 
     if session["stage"] == "completed":
@@ -1074,11 +1065,12 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
             extracted[current_field] = direct_current
 
     if not extracted:
+        invalid = build_invalid_answer_message(current_index, language)
         payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "REASK_CURRENT",
-            "mensagem": build_invalid_answer_message(current_index, language),
-            "pergunta": build_invalid_answer_message(current_index, language)
+            "mensagem": invalid,
+            "pergunta": invalid
         }
         return cache_payload(session, payload)
 
@@ -1090,45 +1082,32 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
 
 # =========================
 # CONFIRMAR
-# Legacy frontend compatibility:
-# return the last already-processed payload,
-# do not reprocess and do not roll back state.
 # =========================
 @app.post("/confirmar/")
 async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(...), session_id: str = Form(...)):
     create_session_if_needed(session_id)
     session = sessions[session_id]
 
-    # Main fix for old frontend:
-    # if responder already processed the turn, confirm just echoes it.
+    # compatibilidade com frontend antigo:
+    # apenas devolve o último payload já processado
     if session.get("last_bot_payload"):
         return session["last_bot_payload"]
 
     language = session["language"] or "English"
     sync_current_question(session)
 
-    interpreted = (resposta_interpretada or "").strip()
-
-    if interpreted in {"START_SCREENING", "REASK_CURRENT"}:
-        current_index = session["current_question"]
-        if current_index < len(QUESTION_DEFS):
-            texto = build_question_text(current_index, language)
-            payload = {"mensagem": texto, "pergunta": texto}
-            return cache_payload(session, payload)
-
-    if interpreted == "READY_FOR_DIAGNOSIS":
+    if session["stage"] == "completed":
         diagnosis_payload = run_diagnosis_from_session(session)
-        payload = {"mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)}
+        payload = {
+            "mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
+        }
         if diagnosis_payload.get("ok"):
             payload["diagnosis"] = diagnosis_payload
         return cache_payload(session, payload)
 
-    if session["current_question"] < len(QUESTION_DEFS):
-        texto = build_question_text(session["current_question"], language)
-        payload = {"mensagem": texto, "pergunta": texto}
-        return cache_payload(session, payload)
-
-    payload = {"mensagem": build_final_message(language)}
+    current_index = session["current_question"]
+    texto = build_question_text(current_index, language)
+    payload = {"mensagem": texto, "pergunta": texto}
     return cache_payload(session, payload)
 
 
@@ -1146,23 +1125,27 @@ async def diagnostico(session_id: str = Form(...)):
 
     if not diagnosis_payload.get("ok"):
         if diagnosis_payload.get("type") == "incomplete":
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "mensagem": build_incomplete_message(language),
-                    "missing_fields": diagnosis_payload.get("missing_fields", [])
-                }
-            )
-        return {"mensagem": build_inconsistent_message(language)}
+            return {
+                "status": "incomplete",
+                "mensagem": build_incomplete_message(language),
+                "missing_fields": diagnosis_payload.get("missing_fields", [])
+            }
+
+        return {
+            "status": "not_found",
+            "mensagem": build_inconsistent_message(language)
+        }
 
     return {
+        "status": "ok",
         "diagnosis_aae_2009_2013": diagnosis_payload["diagnosis_aae_2009_2013"],
         "diagnosis_aae_ese_2025": diagnosis_payload["diagnosis_aae_ese_2025"],
         "complementary_diagnosis": diagnosis_payload["complementary_diagnosis"],
         "diagnostico": diagnosis_payload["diagnosis_aae_2009_2013"],
         "diagnostico_complementar": diagnosis_payload["complementary_diagnosis"],
         "answers_interpreted": {
-            field: label_for_code(session["answers"].get(field), language) for field in FIELD_ORDER
+            field: label_for_code(session["answers"].get(field), language)
+            for field in FIELD_ORDER
         }
     }
 
