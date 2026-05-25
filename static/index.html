@@ -5,9 +5,7 @@
   <title>Endo10 EVO - Endodontic Diagnosis Assistant</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    .typing {
-      display: inline-block;
-    }
+    .typing { display: inline-block; }
     .typing span {
       display: inline-block;
       width: 8px;
@@ -17,12 +15,8 @@
       border-radius: 50%;
       animation: blink 1.4s infinite both;
     }
-    .typing span:nth-child(2) {
-      animation-delay: 0.2s;
-    }
-    .typing span:nth-child(3) {
-      animation-delay: 0.4s;
-    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
     @keyframes blink {
       0%, 80%, 100% { opacity: 0; }
       40% { opacity: 1; }
@@ -36,7 +30,7 @@
       <input type="text" id="user-input" placeholder="Type your response..." autocomplete="off" />
       <button type="submit">Send</button>
     </form>
-    <button id="download-btn">📄 Download PDF</button>
+    <button id="download-btn"> Download PDF</button>
   </div>
 
   <script>
@@ -45,10 +39,8 @@
     const sessionId = Date.now().toString();
     sessionStorage.setItem("session_id", sessionId);
 
-    let pendingConfirmation = false;
-    let lastInterpretedAnswer = '';
-
     function addMessage(message, sender) {
+      if (!message) return;
       const messagesDiv = document.getElementById("messages");
       const messageDiv = document.createElement("div");
       messageDiv.classList.add("message", sender);
@@ -94,104 +86,79 @@
       if (typingDiv) typingDiv.remove();
     }
 
-    async function iniciarChat() {
-      addMessage("Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! \n\nI am Endo10 EVO, your assistant for endodontic diagnosis. Please greet me in your preferred language. 🌍", "bot");
-    }
-
-    async function fetchPergunta() {
-      addTypingIndicator();
-      const response = await fetch(API_BASE + "/perguntar/", {
+    async function postForm(endpoint, params) {
+      const body = new URLSearchParams(params);
+      const response = await fetch(API_BASE + endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `indice=${indice}&session_id=${sessionId}`
+        body: body.toString()
       });
-      const data = await response.json();
-      removeTypingIndicator();
+      return await response.json();
+    }
+
+    function iniciarChat() {
+      addMessage(
+        "Hello! ¡Hola! Bonjour! 你好! Hallo! Ciao! Olá! नमस्ते! مرحبا! 안녕하세요! Привет! \n\nI am Endo10 EVO, your assistant for endodontic diagnosis. Please greet me in your preferred language. 🌍",
+        "bot"
+      );
+    }
+
+    async function handleBotResponse(data) {
+      if (!data) return;
 
       if (data.mensagem) {
         addMessage(data.mensagem, "bot");
+      } else if (data.pergunta) {
+        addMessage(data.pergunta, "bot");
+      }
 
-        // Chamar o diagnóstico
+      if (data.diagnosis) {
+        const diagnosis = data.diagnosis;
+        const d2009 = diagnosis.diagnosis_aae_2009_2013 || "";
+        const d2025 = diagnosis.diagnosis_aae_ese_2025 || "";
+        const comp = diagnosis.complementary_diagnosis || "";
+
         addTypingIndicator();
-        const responseDiagnostico = await fetch(API_BASE + "/diagnostico/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `session_id=${sessionId}`
+        const explicacaoData = await postForm("/explicacao/", {
+          session_id: sessionId,
+          diagnosis_aae_2009_2013: d2009,
+          diagnosis_aae_ese_2025: d2025,
+          complementary_diagnosis: comp
         });
-        const diagnosticoData = await responseDiagnostico.json();
         removeTypingIndicator();
 
-        if (diagnosticoData.diagnostico) {
-          addMessage(`🦷 ${diagnosticoData.diagnostico}`, "bot");
-          addMessage(`📚 ${diagnosticoData.diagnostico_complementar}`, "bot");
-
-          // Chamar a explicação
-          addTypingIndicator();
-          const explicacaoResponse = await fetch(API_BASE + "/explicacao/", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `diagnostico=${encodeURIComponent(diagnosticoData.diagnostico)}&diagnostico_complementar=${encodeURIComponent(diagnosticoData.diagnostico_complementar)}&session_id=${sessionId}`
-          });
-          const explicacaoData = await explicacaoResponse.json();
-          removeTypingIndicator();
-
-          addMessage(`📝 ${explicacaoData.explicacao}`, "bot");
-        } else if (diagnosticoData.mensagem) {
-          addMessage(diagnosticoData.mensagem, "bot");
+        if (explicacaoData.explicacao) {
+          addMessage(explicacaoData.explicacao, "bot");
         }
-      } else {
-        addMessage(data.pergunta, "bot");
       }
     }
 
     document.getElementById("chat-form").addEventListener("submit", async (e) => {
       e.preventDefault();
+
       const userInput = document.getElementById("user-input");
       const userMessage = userInput.value.trim();
       if (!userMessage) return;
 
       addMessage(userMessage, "user");
-
-      if (!pendingConfirmation) {
-        addTypingIndicator();
-        const response = await fetch(API_BASE + "/responder/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `indice=${indice}&resposta_usuario=${encodeURIComponent(userMessage)}&session_id=${sessionId}`
-        });
-        const data = await response.json();
-        removeTypingIndicator();
-
-        lastInterpretedAnswer = data.resposta_interpretada;
-        pendingConfirmation = true;
-
-        addTypingIndicator();
-        const responseConfirm = await fetch(API_BASE + "/confirmar/", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
-        });
-        const confirmData = await responseConfirm.json();
-        removeTypingIndicator();
-
-        addMessage(confirmData.mensagem, "bot");
-      } else {
-        if (userMessage.toLowerCase() === "sim" || userMessage.toLowerCase() === "yes" || userMessage.toLowerCase() === "oui" || userMessage.toLowerCase() === "sí") {
-          await fetch(API_BASE + "/confirmar/", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `indice=${indice}&resposta_interpretada=${encodeURIComponent(lastInterpretedAnswer)}&session_id=${sessionId}`
-          });
-          indice += 1;
-          pendingConfirmation = false;
-          await fetchPergunta();
-        } else {
-          pendingConfirmation = false;
-          await fetchPergunta();
-        }
-      }
-
       userInput.value = "";
+
+      addTypingIndicator();
+      try {
+        const data = await postForm("/responder/", {
+          indice: indice,
+          resposta_usuario: userMessage,
+          session_id: sessionId
+        });
+        removeTypingIndicator();
+
+        indice += 1;
+        await handleBotResponse(data);
+      } catch (error) {
+        removeTypingIndicator();
+        addMessage("There was an error processing your answer. Please try again.", "bot");
+        console.error(error);
+      }
     });
 
     document.getElementById("download-btn").addEventListener("click", () => {
