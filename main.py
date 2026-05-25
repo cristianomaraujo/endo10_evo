@@ -13,6 +13,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import unicodedata
 import textwrap
+from difflib import SequenceMatcher
 
 app = FastAPI()
 
@@ -61,12 +62,20 @@ if STATIC_DIR.exists():
 # HELPERS
 # =========================
 def normalize_text(text: str) -> str:
+    """
+    Normalize free-text answers for clinical option matching.
+
+    The goal is to accept natural answers such as "normal", "Normal",
+    "não teve", "esta com dor", or "espessamento do ligamento periodontal"
+    without allowing the chatbot to fill more than the current clinical field.
+    """
     if text is None:
         return ""
     text = str(text).strip().lower()
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = text.replace("\n", " ").replace("\r", " ")
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -453,6 +462,117 @@ for required_col in REQUIRED_SPREADSHEET_COLS:
 # =========================
 # CANONICALIZATION
 # =========================
+def term_similarity(a: str, b: str) -> float:
+    a = normalize_text(a)
+    b = normalize_text(b)
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def build_terms_for_code(code: str):
+    meta = OPTION_CATALOG[code]
+    raw_terms = (
+        [meta.get("label", ""), meta.get("label_pt", "")] +
+        meta.get("aliases", []) +
+        meta.get("spreadsheet_values", [])
+    )
+    terms = []
+    seen = set()
+    for term in raw_terms:
+        nterm = normalize_text(term)
+        if nterm and nterm not in seen:
+            seen.add(nterm)
+            terms.append(nterm)
+    return terms
+
+
+def local_semantic_shortcuts(field: str, norm: str):
+    """
+    Deterministic clinical shortcuts for common natural answers.
+    These are limited to the current field and therefore do not make the flow loose.
+    """
+    if not norm:
+        return None
+
+    # Generic confirmations/negations are only safe in the PAIN question.
+    if field == "PAIN":
+        no_patterns = [
+            "nao", "não", "sem", "ausente", "sem dor", "nao tem dor", "nao teve dor",
+            "não tem dor", "não teve dor", "nao doi", "não dói", "nao sente dor",
+            "não sente dor", "assintomatico", "assintomático", "indolor"
+        ]
+        yes_patterns = [
+            "sim", "presente", "com dor", "tem dor", "teve dor", "esta com dor",
+            "está com dor", "sente dor", "relata dor", "dor", "dolorido", "desconforto"
+        ]
+        if any(p in norm for p in map(normalize_text, no_patterns)):
+            return "pain_absent"
+        if any(p in norm for p in map(normalize_text, yes_patterns)):
+            return "pain_present"
+
+    if field == "ONSET":
+        na_patterns = ["nao se aplica", "não se aplica", "n a", "sem dor", "ausente"]
+        spontaneous_patterns = ["espontanea", "espontaneo", "espontaneamente", "do nada", "sem estimulo", "sem estímulo"]
+        provoked_patterns = ["provocada", "provocado", "com estimulo", "com estímulo", "apos estimulo", "após estímulo", "frio", "calor", "mastigacao", "mastigação", "doce", "pressao", "pressão"]
+        if any(p in norm for p in map(normalize_text, na_patterns)):
+            return "onset_na"
+        if any(p in norm for p in map(normalize_text, spontaneous_patterns)):
+            return "onset_spontaneous"
+        if any(p in norm for p in map(normalize_text, provoked_patterns)):
+            return "onset_provoked"
+
+    if field == "PULP VITALITY":
+        negative_patterns = [
+            "negativa", "negativo", "sem resposta", "nao respondeu", "não respondeu",
+            "nao teve", "não teve", "nao houve resposta", "não houve resposta",
+            "ausente", "sem reacao", "sem reação", "zero resposta"
+        ]
+        altered_patterns = [
+            "alterada", "alterado", "exagerada", "exacerbada", "persistente",
+            "demorada", "dor persistente", "resposta dolorosa", "resposta aumentada"
+        ]
+        normal_patterns = ["normal", "resposta normal", "leve", "transitoria", "transitória"]
+        if any(p in norm for p in map(normalize_text, negative_patterns)):
+            return "pulp_negative"
+        if any(p in norm for p in map(normalize_text, altered_patterns)):
+            return "pulp_altered"
+        if any(p in norm for p in map(normalize_text, normal_patterns)):
+            return "pulp_normal"
+
+    if field == "PERCUSSION":
+        if any(p in norm for p in map(normalize_text, ["nao se aplica", "não se aplica", "n a"])):
+            return "percussion_na"
+        if any(p in norm for p in map(normalize_text, ["sensivel", "sensível", "dor", "doloroso", "positivo", "tender"])):
+            return "percussion_sensitive"
+        if any(p in norm for p in map(normalize_text, ["normal", "sem dor", "negativo", "sem sensibilidade", "indolor"])):
+            return "percussion_normal"
+
+    if field == "PALPATION":
+        if any(p in norm for p in map(normalize_text, ["edema", "inchaco", "inchaço", "aumento de volume", "tumefacao", "tumefação"])):
+            return "palpation_edema"
+        if any(p in norm for p in map(normalize_text, ["fistula", "fístula", "trajeto fistuloso", "parulis", "parúlide"])):
+            return "palpation_fistula"
+        if any(p in norm for p in map(normalize_text, ["sensivel", "sensível", "dor", "doloroso", "positivo", "tender"])):
+            return "palpation_sensitive"
+        if any(p in norm for p in map(normalize_text, ["normal", "sem dor", "negativo", "sem sensibilidade", "indolor"])):
+            return "palpation_normal"
+
+    if field == "RADIOGRAPHY":
+        if any(p in norm for p in map(normalize_text, ["espessamento", "alargamento", "ligamento periodontal", "periodontal ligament", "pdl"])):
+            return "radiography_thickening_pdl"
+        if any(p in norm for p in map(normalize_text, ["radiolucida circunscrita", "radiolúcida circunscrita", "circunscrita", "bem definida"])):
+            return "radiography_circumscribed_radiolucency"
+        if any(p in norm for p in map(normalize_text, ["radiolucidez apical difusa", "radiolucida difusa", "radiolúcida difusa", "apical difusa", "mal definida"])):
+            return "radiography_diffuse_apical_radiolucency"
+        if any(p in norm for p in map(normalize_text, ["radiopaca difusa", "radiopaco difuso", "radiopaque diffuse"])):
+            return "radiography_diffuse_radiopaque"
+        if any(p in norm for p in map(normalize_text, ["normal", "sem alteracoes", "sem alterações", "lamina dura intacta", "lâmina dura intacta"])):
+            return "radiography_normal"
+
+    return None
+
+
 def canonicalize_value(field: str, value: str):
     norm = normalize_text(value)
     if not norm or field not in FIELD_TO_CODES:
@@ -460,61 +580,45 @@ def canonicalize_value(field: str, value: str):
 
     field_codes = FIELD_TO_CODES[field]
 
+    # 1) Exact match against official labels, Portuguese labels, aliases, and spreadsheet values.
     for code in field_codes:
-        meta = OPTION_CATALOG[code]
-        terms = [meta["label"], meta.get("label_pt", "")] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
-        for term in terms:
-            if normalize_text(term) == norm:
+        for term in build_terms_for_code(code):
+            if term == norm:
                 return code
 
+    # 2) Deterministic clinical shortcuts for common natural-language answers.
+    shortcut = local_semantic_shortcuts(field, norm)
+    if shortcut in field_codes:
+        return shortcut
+
+    # 3) Longest-term containment. This lets phrases like
+    #    "espessamento do ligamento periodontal" match the correct radiographic option.
     candidates = []
     for code in field_codes:
-        meta = OPTION_CATALOG[code]
-        terms = [meta["label"], meta.get("label_pt", "")] + meta.get("aliases", []) + meta.get("spreadsheet_values", [])
-        for term in terms:
-            nterm = normalize_text(term)
-            if nterm:
-                candidates.append((len(nterm), nterm, code))
+        for term in build_terms_for_code(code):
+            if len(term) >= 3:
+                candidates.append((len(term), term, code))
 
     candidates.sort(reverse=True)
-    for _, nterm, code in candidates:
-        if nterm in norm:
+    for _, term, code in candidates:
+        if term in norm or norm in term:
             return code
 
-    if field == "PAIN":
-        if any(term in norm for term in [
-            "sem dor", "nao tem dor", "não tem dor", "esta sem dor", "está sem dor",
-            "ele esta sem dor", "ele está sem dor", "paciente sem dor", "assintomatico", "assintomático"
-        ]):
-            return "pain_absent"
-        if any(term in norm for term in [
-            "com dor", "tem dor", "dor presente", "esta com dor", "está com dor",
-            "ele esta com dor", "ele está com dor", "paciente com dor", "relata dor"
-        ]):
-            return "pain_present"
+    # 4) Conservative fuzzy matching for short/typed answers.
+    #    This accepts minor typos but avoids forcing very ambiguous answers.
+    best_code = None
+    best_score = 0.0
+    for code in field_codes:
+        for term in build_terms_for_code(code):
+            score = term_similarity(norm, term)
+            if score > best_score:
+                best_score = score
+                best_code = code
 
-    if field == "PULP VITALITY":
-        if any(term in norm for term in ["sem resposta", "nao respondeu", "não respondeu", "teste negativo", "negativo", "negative"]):
-            return "pulp_negative"
-        if any(term in norm for term in ["resposta persistente", "resposta exacerbada", "resposta aumentada", "dor persistente"]):
-            return "pulp_altered"
-
-    if field == "PERCUSSION":
-        if any(term in norm for term in ["dor a percussao", "dor à percussão", "sensivel a percussao", "sensível à percussão"]):
-            return "percussion_sensitive"
-
-    if field == "PALPATION":
-        if any(term in norm for term in ["dor a palpacao", "dor à palpação", "sensivel a palpacao", "sensível à palpação"]):
-            return "palpation_sensitive"
-
-    if field == "RADIOGRAPHY":
-        if norm == "circunscrita":
-            return "radiography_circumscribed_radiolucency"
-        if norm == "difusa":
-            return "radiography_diffuse_apical_radiolucency"
+    if best_score >= 0.88:
+        return best_code
 
     return None
-
 
 def label_for_code(code: str, language: str = "English"):
     if not code:
