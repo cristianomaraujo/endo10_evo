@@ -121,7 +121,7 @@ def detect_language(text: str) -> str:
         response = safe_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=MODEL_TRANSLATE,
-            temperature=0
+            temperature=0,
         )
         language = (response.choices[0].message.content or "").strip()
         return language if language else "English"
@@ -134,6 +134,7 @@ def translate_text(text: str, target_language: str) -> str:
         return text
     if normalize_text(target_language) == "english":
         return text
+
     try:
         prompt = (
             f"Translate the following text into {target_language}. "
@@ -145,7 +146,7 @@ def translate_text(text: str, target_language: str) -> str:
         response = safe_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=MODEL_TRANSLATE,
-            temperature=0
+            temperature=0,
         )
         translated = (response.choices[0].message.content or "").strip()
         return translated if translated else text
@@ -156,12 +157,10 @@ def translate_text(text: str, target_language: str) -> str:
 def is_greeting(text: str) -> bool:
     norm = normalize_text(text)
     greetings = {
-        "hi", "hello", "hey", "oi", "ola", "olá", "hola", "salut",
-        "hallo", "ciao", "bom dia", "boa tarde", "boa noite",
-        "good morning", "good afternoon", "good evening"
+        "hi", "hello", "hey", "oi", "ola", "olá", "hola", "salut", "hallo", "ciao",
+        "bom dia", "boa tarde", "boa noite", "good morning", "good afternoon", "good evening"
     }
     return norm in greetings
-
 
 # =========================
 # CANONICAL CLINICAL MODEL
@@ -173,12 +172,10 @@ OPTION_CATALOG = {
         "description": "The patient does not report pain.",
         "description_pt": "O paciente não relata dor.",
         "aliases": [
-            "absent", "no pain", "without pain", "pain absent",
-            "ausente", "sem dor", "nao tem dor", "não tem dor",
-            "ele esta sem dor", "ele está sem dor",
-            "esta sem dor", "está sem dor",
-            "paciente sem dor", "assintomatico", "assintomático",
-            "sem queixa de dor"
+            "absent", "no pain", "without pain", "pain absent", "ausente", "sem dor",
+            "nao tem dor", "não tem dor", "ele esta sem dor", "ele está sem dor",
+            "esta sem dor", "está sem dor", "paciente sem dor", "assintomatico",
+            "assintomático", "sem queixa de dor"
         ],
         "spreadsheet_values": ["Absent"],
     },
@@ -188,11 +185,9 @@ OPTION_CATALOG = {
         "description": "The patient reports pain or some type of discomfort.",
         "description_pt": "O paciente relata dor ou algum tipo de desconforto.",
         "aliases": [
-            "present", "pain", "with pain", "has pain", "pain present",
-            "presente", "com dor", "tem dor", "dor presente",
-            "ele esta com dor", "ele está com dor",
-            "esta com dor", "está com dor",
-            "paciente com dor", "dolorido", "dolorosa",
+            "present", "pain", "with pain", "has pain", "pain present", "presente",
+            "com dor", "tem dor", "dor presente", "ele esta com dor", "ele está com dor",
+            "esta com dor", "está com dor", "paciente com dor", "dolorido", "dolorosa",
             "sente dor", "relata dor", "há dor"
         ],
         "spreadsheet_values": ["Present"],
@@ -211,9 +206,8 @@ OPTION_CATALOG = {
         "description": "The pain starts spontaneously, without any provoking stimulus.",
         "description_pt": "A dor se inicia espontaneamente, sem estímulo desencadeante.",
         "aliases": [
-            "spontaneous", "spontaneously", "espontanea", "espontânea",
-            "espontaneo", "espontâneo", "inicia espontaneamente",
-            "dor espontanea", "dor espontânea"
+            "spontaneous", "spontaneously", "espontanea", "espontânea", "espontaneo",
+            "espontâneo", "inicia espontaneamente", "dor espontanea", "dor espontânea"
         ],
         "spreadsheet_values": ["Spontaneous", "Spontaneous\n"],
     },
@@ -223,9 +217,8 @@ OPTION_CATALOG = {
         "description": "The pain starts after a stimulus, such as cold, heat, pressure, or sweets.",
         "description_pt": "A dor se inicia após um estímulo, como frio, calor, pressão ou doce.",
         "aliases": [
-            "provoked", "provocada", "provocado", "apos estimulo",
-            "após estímulo", "apos frio", "após frio", "apos calor",
-            "após calor", "desencadeada", "induzida"
+            "provoked", "provocada", "provocado", "apos estimulo", "após estímulo",
+            "apos frio", "após frio", "apos calor", "após calor", "desencadeada", "induzida"
         ],
         "spreadsheet_values": ["Provoked"],
     },
@@ -235,9 +228,8 @@ OPTION_CATALOG = {
         "description": "There is an exaggerated or persistent painful response to vitality testing.",
         "description_pt": "Há uma resposta dolorosa exagerada ou persistente ao teste de vitalidade.",
         "aliases": [
-            "altered", "alterada", "alterado", "resposta exacerbada",
-            "resposta aumentada", "resposta persistente", "dor persistente",
-            "hiperreativo", "hyperreactive", "lingering response"
+            "altered", "alterada", "alterado", "resposta exacerbada", "resposta aumentada",
+            "resposta persistente", "dor persistente", "hiperreativo", "hyperreactive", "lingering response"
         ],
         "spreadsheet_values": ["Alterad"],
     },
@@ -247,9 +239,8 @@ OPTION_CATALOG = {
         "description": "There is no response to vitality testing.",
         "description_pt": "Não há resposta ao teste de vitalidade.",
         "aliases": [
-            "negative", "negativo", "sem resposta", "no response",
-            "nao respondeu", "não respondeu", "teste negativo",
-            "sem resposta ao teste", "does not respond", "non-responsive"
+            "negative", "negativo", "sem resposta", "no response", "nao respondeu", "não respondeu",
+            "teste negativo", "sem resposta ao teste", "does not respond", "non-responsive"
         ],
         "spreadsheet_values": ["Negative"],
     },
@@ -258,10 +249,7 @@ OPTION_CATALOG = {
         "label_pt": "Normal",
         "description": "There is a mild, transient response that disappears shortly after the stimulus is removed.",
         "description_pt": "Há uma resposta leve e transitória que desaparece logo após a remoção do estímulo.",
-        "aliases": [
-            "normal", "resposta normal", "transient response",
-            "resposta transitória", "resposta leve"
-        ],
+        "aliases": ["normal", "resposta normal", "transient response", "resposta transitória", "resposta leve"],
         "spreadsheet_values": ["Normal"],
     },
     "percussion_na": {
@@ -277,10 +265,7 @@ OPTION_CATALOG = {
         "label_pt": "Normal",
         "description": "There is no pain or sensitivity on percussion.",
         "description_pt": "Não há dor ou sensibilidade à percussão.",
-        "aliases": [
-            "normal", "sem dor", "no pain", "not sensitive",
-            "sem sensibilidade", "indolor", "negative percussion"
-        ],
+        "aliases": ["normal", "sem dor", "no pain", "not sensitive", "sem sensibilidade", "indolor", "negative percussion"],
         "spreadsheet_values": ["Normal"],
     },
     "percussion_sensitive": {
@@ -289,9 +274,8 @@ OPTION_CATALOG = {
         "description": "There is pain or sensitivity on percussion.",
         "description_pt": "Há dor ou sensibilidade à percussão.",
         "aliases": [
-            "sensitive", "sensivel", "sensível", "painful", "tender",
-            "doloroso", "dor a percussao", "dor à percussão",
-            "sensivel a percussao", "sensível à percussão"
+            "sensitive", "sensivel", "sensível", "painful", "tender", "doloroso",
+            "dor a percussao", "dor à percussão", "sensivel a percussao", "sensível à percussão"
         ],
         "spreadsheet_values": ["Sensitive"],
     },
@@ -300,10 +284,7 @@ OPTION_CATALOG = {
         "label_pt": "Edema",
         "description": "There is swelling of the adjacent tissues.",
         "description_pt": "Há aumento de volume dos tecidos adjacentes.",
-        "aliases": [
-            "edema", "swelling", "swollen", "inchaco", "inchaço",
-            "tumefacao", "tumefação"
-        ],
+        "aliases": ["edema", "swelling", "swollen", "inchaco", "inchaço", "tumefacao", "tumefação"],
         "spreadsheet_values": ["Edema"],
     },
     "palpation_fistula": {
@@ -311,10 +292,7 @@ OPTION_CATALOG = {
         "label_pt": "Fístula",
         "description": "There is a sinus tract or a mucosal/cutaneous opening communicating with the root apex.",
         "description_pt": "Há fístula ou trajeto fistuloso comunicando-se com o ápice radicular.",
-        "aliases": [
-            "fistula", "fístula", "sinus tract", "trajeto fistuloso",
-            "fistulous tract", "parulis", "parúlide"
-        ],
+        "aliases": ["fistula", "fístula", "sinus tract", "trajeto fistuloso", "fistulous tract", "parulis", "parúlide"],
         "spreadsheet_values": ["Fistula"],
     },
     "palpation_normal": {
@@ -322,10 +300,7 @@ OPTION_CATALOG = {
         "label_pt": "Normal",
         "description": "There is no pain on palpation.",
         "description_pt": "Não há dor à palpação.",
-        "aliases": [
-            "normal", "sem dor", "no pain", "not sensitive",
-            "indolor", "sem sensibilidade"
-        ],
+        "aliases": ["normal", "sem dor", "no pain", "not sensitive", "indolor", "sem sensibilidade"],
         "spreadsheet_values": ["Normal"],
     },
     "palpation_sensitive": {
@@ -334,9 +309,8 @@ OPTION_CATALOG = {
         "description": "There is pain or sensitivity on palpation.",
         "description_pt": "Há dor ou sensibilidade à palpação.",
         "aliases": [
-            "sensitive", "sensivel", "sensível", "painful", "tender",
-            "doloroso", "dor a palpacao", "dor à palpação",
-            "sensivel a palpacao", "sensível à palpação"
+            "sensitive", "sensivel", "sensível", "painful", "tender", "doloroso",
+            "dor a palpacao", "dor à palpação", "sensivel a palpacao", "sensível à palpação"
         ],
         "spreadsheet_values": ["Sensivel"],
     },
@@ -346,10 +320,8 @@ OPTION_CATALOG = {
         "description": "There is a well-defined radiolucent lesion with relatively distinct borders.",
         "description_pt": "Há uma lesão radiolúcida bem definida com bordas relativamente distintas.",
         "aliases": [
-            "circumscribed", "circunscrita",
-            "circumscribed radiolucency", "circumscribed radiolucency lesion",
-            "lesao radiolucida circunscrita", "lesão radiolúcida circunscrita",
-            "radiolucidez circunscrita"
+            "circumscribed", "circunscrita", "circumscribed radiolucency", "circumscribed radiolucency lesion",
+            "lesao radiolucida circunscrita", "lesão radiolúcida circunscrita", "radiolucidez circunscrita"
         ],
         "spreadsheet_values": ["Circumscribed radiolucency lesion"],
     },
@@ -359,9 +331,8 @@ OPTION_CATALOG = {
         "description": "There is a diffuse apical radiolucent image or poorly defined radiolucency.",
         "description_pt": "Há uma imagem radiolucente apical difusa ou radiolucidez mal definida.",
         "aliases": [
-            "diffuse", "difusa", "diffuse apical radiolucency",
-            "apical diffuse radiolucency", "radiolucidez apical difusa",
-            "lesao radiolucida difusa", "lesão radiolúcida difusa"
+            "diffuse", "difusa", "diffuse apical radiolucency", "apical diffuse radiolucency",
+            "radiolucidez apical difusa", "lesao radiolucida difusa", "lesão radiolúcida difusa"
         ],
         "spreadsheet_values": ["Diffuse apical radiolucency"],
     },
@@ -371,12 +342,9 @@ OPTION_CATALOG = {
         "description": "There is widening or thickening of the periodontal ligament space.",
         "description_pt": "Há alargamento ou espessamento do espaço do ligamento periodontal.",
         "aliases": [
-            "thickening", "widening", "espessamento", "alargamento",
-            "thickening of the periodontal ligament",
-            "periodontal ligament thickening",
-            "espessamento do ligamento periodontal",
-            "alargamento do ligamento periodontal",
-            "espessamento do espaco periodontal",
+            "thickening", "widening", "espessamento", "alargamento", "thickening of the periodontal ligament",
+            "periodontal ligament thickening", "espessamento do ligamento periodontal",
+            "alargamento do ligamento periodontal", "espessamento do espaco periodontal",
             "espessamento do espaço periodontal"
         ],
         "spreadsheet_values": ["Thickening of the periodontal ligament"],
@@ -395,9 +363,8 @@ OPTION_CATALOG = {
         "description": "There is a diffuse radiopaque lesion with ill-defined borders and gradual transition to adjacent bone.",
         "description_pt": "Há uma lesão radiopaca difusa com bordas mal definidas e transição gradual para o osso adjacente.",
         "aliases": [
-            "diffuse radiopaque", "radiopaca difusa", "radiopaque diffuse",
-            "radiopaco difuso", "diffuse radiopaque lesion",
-            "lesao radiopaca difusa", "lesão radiopaca difusa"
+            "diffuse radiopaque", "radiopaca difusa", "radiopaque diffuse", "radiopaco difuso",
+            "diffuse radiopaque lesion", "lesao radiopaca difusa", "lesão radiopaca difusa"
         ],
         "spreadsheet_values": ["Diffuse radiopaque lesion"],
     },
@@ -408,31 +375,31 @@ QUESTION_DEFS = [
         "field": "PAIN",
         "question": "Is the patient in pain?",
         "question_pt": "O paciente está com dor?",
-        "codes": ["pain_absent", "pain_present"]
+        "codes": ["pain_absent", "pain_present"],
     },
     {
         "field": "ONSET",
         "question": "How did the pain start?",
         "question_pt": "Como a dor começou?",
-        "codes": ["onset_na", "onset_spontaneous", "onset_provoked"]
+        "codes": ["onset_na", "onset_spontaneous", "onset_provoked"],
     },
     {
         "field": "PULP VITALITY",
         "question": "What was the response to the pulp vitality test?",
         "question_pt": "Qual foi a resposta ao teste de vitalidade pulpar?",
-        "codes": ["pulp_altered", "pulp_negative", "pulp_normal"]
+        "codes": ["pulp_altered", "pulp_negative", "pulp_normal"],
     },
     {
         "field": "PERCUSSION",
         "question": "What was the finding on percussion?",
         "question_pt": "Qual foi o achado no teste de percussão?",
-        "codes": ["percussion_na", "percussion_normal", "percussion_sensitive"]
+        "codes": ["percussion_na", "percussion_normal", "percussion_sensitive"],
     },
     {
         "field": "PALPATION",
         "question": "What was the finding on palpation?",
         "question_pt": "Qual foi o achado à palpação?",
-        "codes": ["palpation_edema", "palpation_fistula", "palpation_normal", "palpation_sensitive"]
+        "codes": ["palpation_edema", "palpation_fistula", "palpation_normal", "palpation_sensitive"],
     },
     {
         "field": "RADIOGRAPHY",
@@ -443,8 +410,8 @@ QUESTION_DEFS = [
             "radiography_diffuse_apical_radiolucency",
             "radiography_thickening_pdl",
             "radiography_normal",
-            "radiography_diffuse_radiopaque"
-        ]
+            "radiography_diffuse_radiopaque",
+        ],
     },
 ]
 
@@ -457,9 +424,7 @@ FIELD_ORDER = [q["field"] for q in QUESTION_DEFS]
 try:
     df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME)
 except Exception as e:
-    raise RuntimeError(
-        f"Error loading spreadsheet '{EXCEL_FILE}' / sheet '{SHEET_NAME}': {e}"
-    )
+    raise RuntimeError(f"Error loading spreadsheet '{EXCEL_FILE}' / sheet '{SHEET_NAME}': {e}")
 
 df.columns = [str(col).strip() for col in df.columns]
 for col in df.columns:
@@ -470,22 +435,27 @@ if "PULPT VITALITY" in df.columns and "PULP VITALITY" not in df.columns:
     df = df.rename(columns={"PULPT VITALITY": "PULP VITALITY"})
 
 REQUIRED_SPREADSHEET_COLS = [
-    "PAIN", "ONSET", "PULP VITALITY", "PERCUSSION", "PALPATION", "RADIOGRAPHY",
+    "PAIN",
+    "ONSET",
+    "PULP VITALITY",
+    "PERCUSSION",
+    "PALPATION",
+    "RADIOGRAPHY",
     "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)",
     "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)",
-    "COMPLEMENTARY DIAGNOSIS"
+    "COMPLEMENTARY DIAGNOSIS",
 ]
+
 for required_col in REQUIRED_SPREADSHEET_COLS:
     if required_col not in df.columns:
         raise RuntimeError(f"Required column '{required_col}' not found in spreadsheet.")
-
 
 # =========================
 # CANONICALIZATION
 # =========================
 def canonicalize_value(field: str, value: str):
     norm = normalize_text(value)
-    if not norm:
+    if not norm or field not in FIELD_TO_CODES:
         return None
 
     field_codes = FIELD_TO_CODES[field]
@@ -505,52 +475,36 @@ def canonicalize_value(field: str, value: str):
             nterm = normalize_text(term)
             if nterm:
                 candidates.append((len(nterm), nterm, code))
-    candidates.sort(reverse=True)
 
+    candidates.sort(reverse=True)
     for _, nterm, code in candidates:
         if nterm in norm:
             return code
 
     if field == "PAIN":
         if any(term in norm for term in [
-            "sem dor", "nao tem dor", "não tem dor",
-            "esta sem dor", "está sem dor",
-            "ele esta sem dor", "ele está sem dor",
-            "paciente sem dor", "assintomatico", "assintomático"
+            "sem dor", "nao tem dor", "não tem dor", "esta sem dor", "está sem dor",
+            "ele esta sem dor", "ele está sem dor", "paciente sem dor", "assintomatico", "assintomático"
         ]):
             return "pain_absent"
         if any(term in norm for term in [
-            "com dor", "tem dor", "dor presente",
-            "esta com dor", "está com dor",
-            "ele esta com dor", "ele está com dor",
-            "paciente com dor", "relata dor"
+            "com dor", "tem dor", "dor presente", "esta com dor", "está com dor",
+            "ele esta com dor", "ele está com dor", "paciente com dor", "relata dor"
         ]):
             return "pain_present"
 
     if field == "PULP VITALITY":
-        if any(term in norm for term in [
-            "sem resposta", "nao respondeu", "não respondeu",
-            "teste negativo", "negativo", "negative"
-        ]):
+        if any(term in norm for term in ["sem resposta", "nao respondeu", "não respondeu", "teste negativo", "negativo", "negative"]):
             return "pulp_negative"
-        if any(term in norm for term in [
-            "resposta persistente", "resposta exacerbada",
-            "resposta aumentada", "dor persistente"
-        ]):
+        if any(term in norm for term in ["resposta persistente", "resposta exacerbada", "resposta aumentada", "dor persistente"]):
             return "pulp_altered"
 
     if field == "PERCUSSION":
-        if any(term in norm for term in [
-            "dor a percussao", "dor à percussão",
-            "sensivel a percussao", "sensível à percussão"
-        ]):
+        if any(term in norm for term in ["dor a percussao", "dor à percussão", "sensivel a percussao", "sensível à percussão"]):
             return "percussion_sensitive"
 
     if field == "PALPATION":
-        if any(term in norm for term in [
-            "dor a palpacao", "dor à palpação",
-            "sensivel a palpacao", "sensível à palpação"
-        ]):
+        if any(term in norm for term in ["dor a palpacao", "dor à palpação", "sensivel a palpacao", "sensível à palpação"]):
             return "palpation_sensitive"
 
     if field == "RADIOGRAPHY":
@@ -578,7 +532,6 @@ unmapped_rows = df[[f"__code_{field}" for field in FIELD_ORDER]].isna().any(axis
 if unmapped_rows.any():
     bad_indices = df[unmapped_rows].index.tolist()
     raise RuntimeError(f"Some spreadsheet rows could not be canonicalized. Row indices: {bad_indices}")
-
 
 # =========================
 # SESSIONS
@@ -615,6 +568,7 @@ def get_question_by_index(index: int):
 
 
 def apply_business_rules(session: dict):
+    # If pain is absent, pain onset is not applicable and should not be asked.
     if session["answers"].get("PAIN") == "pain_absent":
         session["answers"]["ONSET"] = "onset_na"
 
@@ -631,6 +585,8 @@ def sync_current_question(session: dict):
     session["current_question"] = get_next_unanswered_index(session)
     if session["current_question"] >= len(QUESTION_DEFS):
         session["stage"] = "completed"
+    elif session["stage"] != "greeting":
+        session["stage"] = "triage"
 
 
 def build_question_text(index: int, language: str) -> str:
@@ -650,10 +606,8 @@ def build_question_text(index: int, language: str) -> str:
 def build_intro(language: str) -> str:
     intro_text = """
 Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.
-
 This system conducts a structured clinical screening based on signs, symptoms, and complementary examination findings. At the end of the process, a diagnostic suggestion will be presented according to the reference nomenclature adopted by the system.
-
-You may answer briefly or in natural language. If your message contains more than one clinical finding, I will try to identify them automatically.
+Please answer one item at a time, according to the option currently requested.
 """.strip()
     return translate_text(intro_text, language)
 
@@ -665,14 +619,14 @@ def build_intro_and_first_question(language: str) -> str:
 def build_inconsistent_message(language: str) -> str:
     return translate_text(
         "I could not find a diagnosis for this exact combination of findings. Please review the selected clinical information.",
-        language
+        language,
     )
 
 
 def build_incomplete_message(language: str) -> str:
     return translate_text(
         "The screening is incomplete. Please answer all required items before requesting the diagnosis.",
-        language
+        language,
     )
 
 
@@ -687,135 +641,104 @@ def build_invalid_answer_message(index: int, language: str) -> str:
 def format_captured_fields(extracted: dict, language: str):
     return {field: label_for_code(code, language) for field, code in extracted.items()}
 
-
-def summarize_recent_context(session: dict, language: str = "English", max_items: int = 6):
-    items = []
-    for field in FIELD_ORDER:
-        if field in session["answers"]:
-            items.append(f"{field}: {label_for_code(session['answers'][field], language)}")
-    return "; ".join(items[:max_items])
-
-
 # =========================
-# EXTRACTION
+# EXTRACTION - STRICT SEQUENTIAL FLOW
 # =========================
 def extract_answers_fallback(user_text: str, session: dict):
+    """
+    Rule-based extraction limited to the current question only.
+    This prevents generic answers such as 'normal' or 'sem dor' from filling multiple fields.
+    """
     extracted = {}
-
     sync_current_question(session)
+
     if session["stage"] == "completed":
         return extracted
 
     current_field = QUESTION_DEFS[session["current_question"]]["field"]
-    norm = normalize_text(user_text)
-
     current_code = canonicalize_value(current_field, user_text)
+
     if current_code:
         extracted[current_field] = current_code
 
-    multi_signal = any(sep in norm for sep in [";", ",", " e ", " and ", " além disso", "também", "also"])
-    explicit_field_cues = any(term in norm for term in [
-        "vitalidade", "teste de vitalidade", "percuss", "palpa", "radiogra", "rx", "radiograf"
-    ])
-
-    if multi_signal or explicit_field_cues:
-        remaining_fields = [field for field in FIELD_ORDER if field not in session["answers"] and field != current_field]
-        for field in remaining_fields:
-            code = canonicalize_value(field, user_text)
-            if code:
-                if normalize_text(user_text) in {"sem dor", "normal", "sensivel", "sensível", "circunscrita"}:
-                    continue
-                extracted[field] = code
-
-    if extracted.get("PAIN") == "pain_absent":
+    if current_field == "PAIN" and extracted.get("PAIN") == "pain_absent":
         extracted["ONSET"] = "onset_na"
 
     return extracted
 
 
 def extract_answers_with_llm(user_text: str, session: dict):
-    remaining_fields = [field for field in FIELD_ORDER if field not in session["answers"]]
-    if not remaining_fields:
+    """
+    LLM extraction limited to the current question only.
+    The model is not allowed to infer or fill future fields.
+    """
+    sync_current_question(session)
+
+    if session["stage"] == "completed":
         return {}
 
     current_field = QUESTION_DEFS[session["current_question"]]["field"]
-    language = session.get("language") or "English"
-    clinical_context = summarize_recent_context(session, language)
 
-    options_by_field = {}
-    for field in remaining_fields:
-        options_by_field[field] = []
-        for code in FIELD_TO_CODES[field]:
-            meta = OPTION_CATALOG[code]
-            options_by_field[field].append({
-                "code": code,
-                "label": meta["label"],
-                "label_pt": meta.get("label_pt", meta["label"]),
-                "aliases": meta["aliases"][:10]
-            })
+    options = []
+    for code in FIELD_TO_CODES[current_field]:
+        meta = OPTION_CATALOG[code]
+        options.append({
+            "code": code,
+            "label": meta["label"],
+            "label_pt": meta.get("label_pt", meta["label"]),
+            "aliases": meta.get("aliases", [])[:12],
+        })
 
     prompt = f"""
-You are extracting structured endodontic triage data.
+You are extracting ONE structured answer for an endodontic triage chatbot.
 
-Current field being asked:
+Current field:
 {current_field}
-
-Return ONLY a valid JSON object in this format:
-{{
-  "answers": {{
-    "PAIN": null,
-    "ONSET": null,
-    "PULP VITALITY": null,
-    "PERCUSSION": null,
-    "PALPATION": null,
-    "RADIOGRAPHY": null
-  }}
-}}
-
-If a field is identified, use:
-{{"code": "...", "evidence": "...", "confidence": 0.0}}
-
-Strict rules:
-- Prefer extracting ONLY the current field.
-- Extract additional fields only if the message explicitly contains more than one clinical finding.
-- Do not infer percussion, palpation, or radiography from generic terms such as "normal", "sem dor", "sensitive", or "circumscribed" unless the message explicitly refers to that exam.
-- Never invent findings.
-- Confidence must be between 0 and 1.
-- If PAIN is clearly absent, ONSET may be set to onset_na.
-
-Known clinical context:
-{clinical_context if clinical_context else "None"}
-
-Allowed options:
-{json.dumps(options_by_field, ensure_ascii=False, indent=2)}
 
 User message:
 {user_text}
+
+Allowed options:
+{json.dumps(options, ensure_ascii=False, indent=2)}
+
+Return ONLY valid JSON:
+{{
+  "code": null,
+  "confidence": 0.0
+}}
+
+Rules:
+- Extract only the current field.
+- Do not extract other clinical fields.
+- Do not infer unstated findings.
+- If the answer is ambiguous, return null.
+- Confidence must be between 0 and 1.
 """.strip()
 
     try:
         response = safe_chat_completion(
             messages=[
-                {"role": "system", "content": "You extract structured clinical data and return only JSON."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You extract one clinical answer and return only JSON."},
+                {"role": "user", "content": prompt},
             ],
             model=MODEL_EXTRACT,
             temperature=0,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
+
         raw = response.choices[0].message.content or "{}"
         data = safe_json_loads(raw) or {}
 
-        extracted = {}
-        for field, payload in (data.get("answers") or {}).items():
-            if field not in remaining_fields or not payload:
-                continue
-            code = payload.get("code")
-            confidence = payload.get("confidence", 0)
-            if code in FIELD_TO_CODES[field] and isinstance(confidence, (int, float)) and confidence >= 0.80:
-                extracted[field] = code
+        code = data.get("code")
+        confidence = data.get("confidence", 0)
 
-        return extracted
+        if code in FIELD_TO_CODES[current_field] and isinstance(confidence, (int, float)) and confidence >= 0.80:
+            extracted = {current_field: code}
+            if current_field == "PAIN" and code == "pain_absent":
+                extracted["ONSET"] = "onset_na"
+            return extracted
+
+        return {}
     except Exception:
         return {}
 
@@ -826,22 +749,19 @@ def merge_extracted_answers(session: dict, extracted: dict):
             session["answers"][field] = code
     sync_current_question(session)
 
-
 # =========================
 # DIAGNOSIS ENGINE
 # =========================
 def find_diagnosis_row(answers: dict):
     temp_df = df.copy()
-
     conditions = (
-        (temp_df["__code_PAIN"] == answers.get("PAIN")) &
-        (temp_df["__code_ONSET"] == answers.get("ONSET")) &
-        (temp_df["__code_PULP VITALITY"] == answers.get("PULP VITALITY")) &
-        (temp_df["__code_PERCUSSION"] == answers.get("PERCUSSION")) &
-        (temp_df["__code_PALPATION"] == answers.get("PALPATION")) &
-        (temp_df["__code_RADIOGRAPHY"] == answers.get("RADIOGRAPHY"))
+        (temp_df["__code_PAIN"] == answers.get("PAIN"))
+        & (temp_df["__code_ONSET"] == answers.get("ONSET"))
+        & (temp_df["__code_PULP VITALITY"] == answers.get("PULP VITALITY"))
+        & (temp_df["__code_PERCUSSION"] == answers.get("PERCUSSION"))
+        & (temp_df["__code_PALPATION"] == answers.get("PALPATION"))
+        & (temp_df["__code_RADIOGRAPHY"] == answers.get("RADIOGRAPHY"))
     )
-
     result = temp_df[conditions]
     if result.empty:
         return None
@@ -851,18 +771,11 @@ def find_diagnosis_row(answers: dict):
 def run_diagnosis_from_session(session: dict):
     missing_fields = [field for field in FIELD_ORDER if field not in session["answers"]]
     if missing_fields:
-        return {
-            "ok": False,
-            "type": "incomplete",
-            "missing_fields": missing_fields
-        }
+        return {"ok": False, "type": "incomplete", "missing_fields": missing_fields}
 
     row = find_diagnosis_row(session["answers"])
     if row is None:
-        return {
-            "ok": False,
-            "type": "not_found"
-        }
+        return {"ok": False, "type": "not_found"}
 
     col_2009 = "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)"
     col_2025 = "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)"
@@ -875,14 +788,14 @@ def run_diagnosis_from_session(session: dict):
     session["diagnosis_result"] = {
         "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)": diagnosis_aae_2009_2013,
         "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)": diagnosis_aae_ese_2025,
-        "COMPLEMENTARY DIAGNOSIS": complementary_diagnosis
+        "COMPLEMENTARY DIAGNOSIS": complementary_diagnosis,
     }
 
     return {
         "ok": True,
         "diagnosis_aae_2009_2013": diagnosis_aae_2009_2013,
         "diagnosis_aae_ese_2025": diagnosis_aae_ese_2025,
-        "complementary_diagnosis": complementary_diagnosis
+        "complementary_diagnosis": complementary_diagnosis,
     }
 
 
@@ -912,7 +825,7 @@ def build_response_after_processing(session: dict, extracted: dict, primary_fiel
             "campo": primary_field,
             "resposta_interpretada": label_for_code(primary_code, language),
             "mensagem": final_message,
-            "captured_fields": format_captured_fields(extracted, language)
+            "captured_fields": format_captured_fields(extracted, language),
         }
 
         if diagnosis_payload.get("ok"):
@@ -929,10 +842,9 @@ def build_response_after_processing(session: dict, extracted: dict, primary_fiel
         "resposta_interpretada": label_for_code(primary_code, language),
         "mensagem": next_question,
         "pergunta": next_question,
-        "captured_fields": format_captured_fields(extracted, language)
+        "captured_fields": format_captured_fields(extracted, language),
     }
     return cache_payload(session, payload)
-
 
 # =========================
 # ROOT / HEALTH
@@ -955,7 +867,6 @@ async def root():
 async def health():
     return {"status": "ok"}
 
-
 # =========================
 # PERGUNTAR
 # =========================
@@ -965,25 +876,26 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
     session = sessions[session_id]
     language = session["language"] or "English"
 
+    if session["stage"] == "greeting":
+        session["stage"] = "triage"
+        session["current_question"] = 0
+        texto = build_intro_and_first_question(language)
+        payload = {"pergunta": texto, "mensagem": texto}
+        return cache_payload(session, payload)
+
     sync_current_question(session)
 
-    if session["stage"] == "greeting":
-        texto = translate_text(
-            "Hello! I am Endo10 EVO, a virtual assistant developed to support diagnostic reasoning in Endodontics.",
-            language
-        )
-        payload = {"pergunta": texto, "mensagem": texto}
+    if session["stage"] == "completed":
+        diagnosis_payload = run_diagnosis_from_session(session)
+        payload = {"mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)}
+        if diagnosis_payload.get("ok"):
+            payload["diagnosis"] = diagnosis_payload
         return cache_payload(session, payload)
 
     current_index = session["current_question"]
-    if current_index < len(QUESTION_DEFS):
-        texto = build_question_text(current_index, language)
-        payload = {"pergunta": texto, "mensagem": texto}
-        return cache_payload(session, payload)
-
-    payload = {"mensagem": build_final_message(language)}
+    texto = build_question_text(current_index, language)
+    payload = {"pergunta": texto, "mensagem": texto}
     return cache_payload(session, payload)
-
 
 # =========================
 # RESPONDER
@@ -992,12 +904,10 @@ async def perguntar(indice: int = Form(...), session_id: str = Form(...)):
 async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), session_id: str = Form(...)):
     create_session_if_needed(session_id)
     session = sessions[session_id]
-
     user_text = (resposta_usuario or "").strip()
 
     if not session["language"]:
         session["language"] = detect_language(user_text)
-
     language = session["language"]
 
     if user_text:
@@ -1013,28 +923,9 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
                 "campo": "__FLOW__",
                 "resposta_interpretada": "START_SCREENING",
                 "mensagem": intro_first,
-                "pergunta": intro_first
+                "pergunta": intro_first,
             }
             return cache_payload(session, payload)
-
-        extracted = extract_answers_fallback(user_text, session)
-        if not extracted:
-            extracted = extract_answers_with_llm(user_text, session)
-
-        if extracted:
-            merge_extracted_answers(session, extracted)
-            primary_field = list(extracted.keys())[0]
-            primary_code = extracted[primary_field]
-            return build_response_after_processing(session, extracted, primary_field, primary_code)
-
-        intro_first = build_intro_and_first_question(language)
-        payload = {
-            "campo": "__FLOW__",
-            "resposta_interpretada": "START_SCREENING",
-            "mensagem": intro_first,
-            "pergunta": intro_first
-        }
-        return cache_payload(session, payload)
 
     sync_current_question(session)
 
@@ -1044,7 +935,7 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
         payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "READY_FOR_DIAGNOSIS",
-            "mensagem": final_message
+            "mensagem": final_message,
         }
         if diagnosis_payload.get("ok"):
             payload["diagnosis"] = diagnosis_payload
@@ -1059,26 +950,25 @@ async def responder(indice: int = Form(...), resposta_usuario: str = Form(...), 
     if not extracted:
         extracted = extract_answers_with_llm(user_text, session)
 
-    if current_field not in extracted:
-        direct_current = canonicalize_value(current_field, user_text)
-        if direct_current:
-            extracted[current_field] = direct_current
+    # Security lock: accept only the current field, plus automatic ONSET = not applicable when PAIN is absent.
+    allowed_fields = {current_field}
+    if current_field == "PAIN" and extracted.get("PAIN") == "pain_absent":
+        allowed_fields.add("ONSET")
+    extracted = {field: code for field, code in extracted.items() if field in allowed_fields}
 
-    if not extracted:
+    if current_field not in extracted:
         invalid = build_invalid_answer_message(current_index, language)
         payload = {
             "campo": "__FLOW__",
             "resposta_interpretada": "REASK_CURRENT",
             "mensagem": invalid,
-            "pergunta": invalid
+            "pergunta": invalid,
         }
         return cache_payload(session, payload)
 
     merge_extracted_answers(session, extracted)
-    primary_field = current_field if current_field in extracted else list(extracted.keys())[0]
-    primary_code = extracted[primary_field]
-    return build_response_after_processing(session, extracted, primary_field, primary_code)
-
+    primary_code = extracted[current_field]
+    return build_response_after_processing(session, extracted, current_field, primary_code)
 
 # =========================
 # CONFIRMAR
@@ -1088,8 +978,7 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
     create_session_if_needed(session_id)
     session = sessions[session_id]
 
-    # compatibilidade com frontend antigo:
-    # apenas devolve o último payload já processado
+    # Compatibility with the old frontend: returns the last payload already processed.
     if session.get("last_bot_payload"):
         return session["last_bot_payload"]
 
@@ -1098,9 +987,7 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
 
     if session["stage"] == "completed":
         diagnosis_payload = run_diagnosis_from_session(session)
-        payload = {
-            "mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)
-        }
+        payload = {"mensagem": build_final_message(language, diagnosis_payload if diagnosis_payload.get("ok") else None)}
         if diagnosis_payload.get("ok"):
             payload["diagnosis"] = diagnosis_payload
         return cache_payload(session, payload)
@@ -1109,7 +996,6 @@ async def confirmar(indice: int = Form(...), resposta_interpretada: str = Form(.
     texto = build_question_text(current_index, language)
     payload = {"mensagem": texto, "pergunta": texto}
     return cache_payload(session, payload)
-
 
 # =========================
 # DIAGNOSTICO
@@ -1128,13 +1014,9 @@ async def diagnostico(session_id: str = Form(...)):
             return {
                 "status": "incomplete",
                 "mensagem": build_incomplete_message(language),
-                "missing_fields": diagnosis_payload.get("missing_fields", [])
+                "missing_fields": diagnosis_payload.get("missing_fields", []),
             }
-
-        return {
-            "status": "not_found",
-            "mensagem": build_inconsistent_message(language)
-        }
+        return {"status": "not_found", "mensagem": build_inconsistent_message(language)}
 
     return {
         "status": "ok",
@@ -1146,9 +1028,8 @@ async def diagnostico(session_id: str = Form(...)):
         "answers_interpreted": {
             field: label_for_code(session["answers"].get(field), language)
             for field in FIELD_ORDER
-        }
+        },
     }
-
 
 # =========================
 # EXPLICACAO
@@ -1160,12 +1041,11 @@ async def explicacao(
     diagnosis_aae_ese_2025: str = Form(None),
     complementary_diagnosis: str = Form(None),
     diagnostico: str = Form(None),
-    diagnostico_complementar: str = Form(None)
+    diagnostico_complementar: str = Form(None),
 ):
     create_session_if_needed(session_id)
     session = sessions[session_id]
     language = session["language"] or "English"
-
     stored = session.get("diagnosis_result", {})
 
     diag_2009 = diagnosis_aae_2009_2013 or stored.get("DIAGNOSIS (AAE NOMENCLATURE 2009/2013)") or diagnostico or ""
@@ -1175,14 +1055,12 @@ async def explicacao(
     if not diag_2009 and not diag_2025 and not comp_diag:
         return JSONResponse(
             status_code=400,
-            content={"mensagem": "No diagnosis is available yet. Run /diagnostico/ first."}
+            content={"mensagem": "No diagnosis is available yet. Run /diagnostico/ first."},
         )
 
     prompt = f"""
 Explain clearly to a dentist the following endodontic diagnostic result.
-
-Write the entire answer in {language}.
-Do not switch languages.
+Write the entire answer in {language}. Do not switch languages.
 Use a professional and clinically coherent tone.
 If there are two nomenclatures, explain that they correspond to different diagnostic classification systems.
 If there is a complementary diagnosis, explain its practical clinical meaning.
@@ -1198,20 +1076,16 @@ Diagnostic result:
         response = safe_chat_completion(
             messages=[
                 {"role": "system", "content": "You are an endodontics professor."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": prompt},
             ],
             model=MODEL_EXPLAIN,
-            temperature=0.2
+            temperature=0.2,
         )
         explanation_text = (response.choices[0].message.content or "").strip()
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"mensagem": f"Error generating explanation: {str(e)}"}
-        )
+        return JSONResponse(status_code=500, content={"mensagem": f"Error generating explanation: {str(e)}"})
 
     return JSONResponse(content={"explicacao": explanation_text})
-
 
 # =========================
 # RESET
@@ -1221,7 +1095,6 @@ async def reset_session(session_id: str = Form(...)):
     sessions[session_id] = empty_session()
     return {"mensagem": "Session reset successfully."}
 
-
 # =========================
 # PDF
 # =========================
@@ -1229,7 +1102,6 @@ async def reset_session(session_id: str = Form(...)):
 async def gerar_pdf(session_id: str):
     create_session_if_needed(session_id)
     session = sessions[session_id]
-
     answers = session.get("answers", {})
     diagnosis_result = session.get("diagnosis_result", {})
     language = session.get("language") or "English"
@@ -1256,8 +1128,8 @@ async def gerar_pdf(session_id: str):
     p.setFont("Helvetica", 11)
     write_lines([f"Session ID: {session_id}"], step=18)
     write_lines([""], step=10)
-
     write_lines(["Answers:"], step=18)
+
     for q in QUESTION_DEFS:
         field = q["field"]
         value = label_for_code(answers.get(field), language) if answers.get(field) else "Not answered"
@@ -1285,5 +1157,5 @@ async def gerar_pdf(session_id: str):
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=endodontic_screening_report.pdf"}
+        headers={"Content-Disposition": "attachment; filename=endodontic_screening_report.pdf"},
     )
