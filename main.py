@@ -700,6 +700,12 @@ def build_question_text(index: int, language: str) -> str:
 
     base_text = f"{question_line}\n\n"
     for code in q["codes"]:
+        # Hide "Not applicable" only in the percussion question.
+        # The diagnostic logic remains unchanged: PERCUSSION is still collected
+        # and still used in the spreadsheet matching.
+        if q["field"] == "PERCUSSION" and code == "percussion_na":
+            continue
+
         meta = OPTION_CATALOG[code]
         label = meta.get("label_pt", meta["label"]) if is_pt else meta["label"]
         desc = meta.get("description_pt", meta["description"]) if is_pt else meta["description"]
