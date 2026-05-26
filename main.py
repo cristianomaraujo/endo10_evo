@@ -862,9 +862,38 @@ def merge_extracted_answers(session: dict, extracted: dict):
 # =========================
 # DIAGNOSIS ENGINE
 # =========================
+def select_diagnosis_candidate(result: pd.DataFrame):
+    """
+    Select one row from a diagnostic match.
+
+    Some spreadsheet combinations may be duplicated for internal testing or
+    alternative clinical routes. This function returns the first row only when
+    all matched rows point to the same diagnostic output. If different
+    diagnostic outputs are found, the match is considered unsafe.
+    """
+    if result.empty:
+        return None
+
+    diagnosis_cols = [
+        "DIAGNOSIS (AAE NOMENCLATURE 2009/2013)",
+        "DIAGNOSIS (AAE/ESE NOMENCLATURE 2025)",
+        "COMPLEMENTARY DIAGNOSIS",
+    ]
+
+    available_cols = [col for col in diagnosis_cols if col in result.columns]
+    unique_outputs = result[available_cols].drop_duplicates()
+
+    if len(unique_outputs) > 1:
+        return None
+
+    return result.iloc[0]
+
+
 def find_diagnosis_row(answers: dict):
     temp_df = df.copy()
-    conditions = (
+
+    # First attempt: exact match, including percussion.
+    exact_conditions = (
         (temp_df["__code_PAIN"] == answers.get("PAIN"))
         & (temp_df["__code_ONSET"] == answers.get("ONSET"))
         & (temp_df["__code_PULP VITALITY"] == answers.get("PULP VITALITY"))
@@ -872,10 +901,38 @@ def find_diagnosis_row(answers: dict):
         & (temp_df["__code_PALPATION"] == answers.get("PALPATION"))
         & (temp_df["__code_RADIOGRAPHY"] == answers.get("RADIOGRAPHY"))
     )
-    result = temp_df[conditions]
-    if result.empty:
-        return None
-    return result.iloc[0]
+
+    exact_result = temp_df[exact_conditions]
+    exact_row = select_diagnosis_candidate(exact_result)
+    if exact_row is not None:
+        return exact_row
+
+    # Second attempt: controlled fallback for spreadsheet rows in which
+    # PERCUSSION is marked as "Not applicable".
+    #
+    # Rationale:
+    # - The chatbot still asks and stores percussion.
+    # - If the spreadsheet has an exact Normal/Sensitive row, that row is used.
+    # - If no exact row exists, but the equivalent row is registered as
+    #   "Not applicable", that row is used as a wildcard for percussion.
+    # - This avoids changing the clinical sequence and avoids changing the
+    #   spreadsheet engine, while preserving rows where percussion truly matters.
+    if answers.get("PERCUSSION") in {"percussion_normal", "percussion_sensitive"}:
+        fallback_conditions = (
+            (temp_df["__code_PAIN"] == answers.get("PAIN"))
+            & (temp_df["__code_ONSET"] == answers.get("ONSET"))
+            & (temp_df["__code_PULP VITALITY"] == answers.get("PULP VITALITY"))
+            & (temp_df["__code_PERCUSSION"] == "percussion_na")
+            & (temp_df["__code_PALPATION"] == answers.get("PALPATION"))
+            & (temp_df["__code_RADIOGRAPHY"] == answers.get("RADIOGRAPHY"))
+        )
+
+        fallback_result = temp_df[fallback_conditions]
+        fallback_row = select_diagnosis_candidate(fallback_result)
+        if fallback_row is not None:
+            return fallback_row
+
+    return None
 
 
 def run_diagnosis_from_session(session: dict):
