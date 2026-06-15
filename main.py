@@ -1325,6 +1325,6 @@ async def gerar_pdf(session_id: str):
     buffer,
     media_type="application/pdf",
     headers={
-        "Content-Disposition": "inline; filename=endodontic_screening_report.pdf"
+        "Content-Disposition": "attachment; filename=endodontic_screening_report.pdf"
     },
 )
