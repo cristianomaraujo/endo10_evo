@@ -1322,7 +1322,9 @@ async def gerar_pdf(session_id: str):
     buffer.seek(0)
 
     return StreamingResponse(
-        buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=endodontic_screening_report.pdf"},
-    )
+    buffer,
+    media_type="application/pdf",
+    headers={
+        "Content-Disposition": "inline; filename=endodontic_screening_report.pdf"
+    },
+)
