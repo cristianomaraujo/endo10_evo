@@ -32,11 +32,13 @@
 <body>
   <div id="chat-container">
     <div id="messages"></div>
+
     <form id="chat-form">
       <input type="text" id="user-input" placeholder="Type your response..." autocomplete="off" />
       <button type="submit">Send</button>
     </form>
-    <button id="download-btn"> Download PDF</button>
+
+    <button id="download-btn" type="button">Download PDF</button>
   </div>
 
   <script>
@@ -47,6 +49,7 @@
 
     function addMessage(message, sender) {
       if (!message) return;
+
       const messagesDiv = document.getElementById("messages");
       const messageDiv = document.createElement("div");
       messageDiv.classList.add("message", sender);
@@ -94,11 +97,13 @@
 
     async function postForm(endpoint, params) {
       const body = new URLSearchParams(params);
+
       const response = await fetch(API_BASE + endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: body.toString()
       });
+
       return await response.json();
     }
 
@@ -125,12 +130,14 @@
         const comp = diagnosis.complementary_diagnosis || "";
 
         addTypingIndicator();
+
         const explicacaoData = await postForm("/explicacao/", {
           session_id: sessionId,
           diagnosis_aae_2009_2013: d2009,
           diagnosis_aae_ese_2025: d2025,
           complementary_diagnosis: comp
         });
+
         removeTypingIndicator();
 
         if (explicacaoData.explicacao) {
@@ -150,12 +157,14 @@
       userInput.value = "";
 
       addTypingIndicator();
+
       try {
         const data = await postForm("/responder/", {
           indice: indice,
           resposta_usuario: userMessage,
           session_id: sessionId
         });
+
         removeTypingIndicator();
 
         indice += 1;
@@ -168,7 +177,16 @@
     });
 
     document.getElementById("download-btn").addEventListener("click", () => {
-      window.open(API_BASE + `/pdf/${sessionId}`, "_blank");
+      const pdfUrl = API_BASE + `/pdf/${sessionId}`;
+
+      const link = document.createElement("a");
+      link.href = pdfUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
 
     iniciarChat();
